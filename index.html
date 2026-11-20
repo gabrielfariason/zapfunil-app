@@ -2,97 +2,197 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="ZapFunil">
-<meta name="theme-color" content="#0b1f1b">
+<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0b141a" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="manifest" href="manifest.webmanifest">
 <title>ZapFunil</title>
 <style>
-:root{--bg:#0b1f1b;--card:#12302a;--card2:#173b34;--ink:#eaf5f1;--mute:#93b3aa;--line:#22463f;--acc:#25d366;--yel:#ffd60a;--red:#ff6b5e;--safe-t:env(safe-area-inset-top);--safe-b:env(safe-area-inset-bottom)}
-@media (prefers-color-scheme:light){:root{--bg:#f2f6f4;--card:#fff;--card2:#eef4f1;--ink:#10241f;--mute:#5d746d;--line:#dbe6e1}}
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;min-width:0}
-html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif}
-body{padding:calc(var(--safe-t) + 8px) 14px calc(var(--safe-b) + 84px)}
-h1{font-size:22px;margin:0}h2{font-size:17px;margin:18px 0 8px}
-.top{display:flex;align-items:center;gap:10px;margin-bottom:10px}
-.top .logo{width:34px;height:34px;border-radius:10px;background:#128c7e;display:grid;place-items:center;color:var(--yel);font-size:20px;font-weight:800}
-.pill{font-size:12px;padding:4px 9px;border-radius:99px;background:var(--card2);color:var(--mute);white-space:nowrap}
-.pill.ok{background:rgba(37,211,102,.16);color:var(--acc)}.pill.bad{background:rgba(255,107,94,.16);color:var(--red)}
-.grow{flex:1}
-.btn{appearance:none;border:0;border-radius:12px;padding:12px 16px;font:600 16px/1 inherit;background:var(--acc);color:#05261b;min-height:44px;cursor:pointer}
-.btn.sec{background:var(--card2);color:var(--ink)}.btn.red{background:var(--red);color:#2b0703}.btn.sm{min-height:36px;padding:8px 12px;font-size:14px}
-.btn.block{width:100%}.btn:disabled{opacity:.5}
-.auto{border:0;border-radius:99px;padding:7px 12px;font:600 13px inherit;background:rgba(37,211,102,.16);color:var(--acc);min-height:34px}
-.auto.off{background:rgba(255,214,10,.18);color:var(--yel)}
-input,select{width:100%;font:16px inherit;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);min-height:46px}
-input:focus,select:focus{outline:2px solid var(--acc);border-color:transparent}
-label{display:block;font-size:13px;color:var(--mute);margin:12px 0 6px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:4px 0;margin-bottom:12px;overflow:hidden}
-.row{display:flex;align-items:center;gap:12px;padding:11px 14px;border-top:1px solid var(--line);width:100%;background:none;border-left:0;border-right:0;border-bottom:0;color:inherit;font:inherit;text-align:left}
-.card .row:first-child{border-top:0}
-button.row:active{background:var(--card2)}
-.ic{width:36px;height:36px;border-radius:10px;background:var(--card2);display:grid;place-items:center;flex:none;font-size:17px}
-.t{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.s{font-size:13px;color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.col{display:flex;flex-direction:column;flex:1;min-width:0}
-.badge{background:var(--acc);color:#05261b;border-radius:99px;font-size:12px;font-weight:700;padding:1px 7px}
-.grp{font-size:12px;color:var(--mute);font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:12px 14px 4px}
-.chip{display:flex;align-items:center;gap:10px;background:var(--card2);border-radius:14px;padding:10px 12px;margin-bottom:10px}
-.empty{color:var(--mute);text-align:center;padding:22px 10px;font-size:14px}
-.bar{height:7px;border-radius:9px;background:var(--card2);overflow:hidden;margin-top:6px}.bar>i{display:block;height:100%;background:var(--acc)}
-nav{position:fixed;left:0;right:0;bottom:0;display:grid;grid-template-columns:repeat(5,1fr);background:var(--card);border-top:1px solid var(--line);padding:6px 4px calc(var(--safe-b) + 6px);z-index:5}
-nav button{background:none;border:0;color:var(--mute);font:600 11px inherit;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0;min-height:48px}
-nav button b{font-size:20px;font-weight:400}nav button.on{color:var(--acc)}
-.sheet{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:flex-end;z-index:10}
-.sheet>div{background:var(--card);width:100%;border-radius:20px 20px 0 0;padding:18px 16px calc(var(--safe-b) + 16px);max-height:85vh;overflow:auto}
-.sheet h3{margin:0 0 6px;font-size:18px}
-.toast{position:fixed;left:50%;top:calc(var(--safe-t) + 10px);transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;font-size:14px;z-index:20;max-width:90vw;opacity:0;transition:opacity .2s;pointer-events:none}
-.toast.show{opacity:1}
-.st-pending{color:var(--yel)}.st-running{color:var(--yel)}.st-done{color:var(--acc)}.st-error{color:var(--red)}
+/*
+VOICE: ferramenta de trabalho, calma e rápida, com cara de app nativo do iPhone.
+IDEA: o próprio WhatsApp — lista de conversas, balões, barra de digitação — com os funis a um toque.
+PICTURE: a conversa aberta é a peça central; funis viram fichas acima do teclado.
+COLOUR and TYPE: verde WhatsApp #00a884 como acento, fundo branco/grafite, fonte do sistema (SF Pro).
+LAYOUT: barra de abas embaixo, telas empilhadas, conversa abre por cima com voltar.
+*/
+:root{color-scheme:light dark;
+--bg:#ffffff;--bg2:#f2f2f7;--card:#ffffff;--ink:#111b21;--mute:#667781;--line:rgba(60,60,67,.14);--acc:#00a884;--acc-d:#008069;--accink:#ffffff;
+--me:#d9fdd3;--them:#ffffff;--wall:#efeae2;--red:#ff3b30;--yel:#ffcc00;--tab:rgba(249,249,249,.94);--blue:#53bdeb;
+--st:env(safe-area-inset-top);--sb:env(safe-area-inset-bottom)}
+@media (prefers-color-scheme:dark){:root{--bg:#0b141a;--bg2:#111b21;--card:#1f2c34;--ink:#e9edef;--mute:#8696a0;--line:rgba(134,150,160,.18);--me:#005c4b;--them:#1f2c34;--wall:#0b141a;--tab:rgba(17,27,33,.94)}}
+*{box-sizing:border-box;min-width:0;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:16px/1.4 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif;-webkit-font-smoothing:antialiased;overscroll-behavior:none}
+button{font:inherit;color:inherit;cursor:pointer}
+svg{display:block}
 .hide{display:none!important}
-.login{max-width:420px;margin:40px auto}
-.seg{display:flex;gap:6px;margin-bottom:10px;overflow-x:auto}.seg button{flex:none;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:99px;padding:7px 12px;font:14px inherit}
-.seg button.on{background:var(--acc);color:#05261b;border-color:var(--acc)}
-@media (prefers-reduced-motion:reduce){.toast{transition:none}}
+.shell{position:fixed;inset:0;display:flex;flex-direction:column}
+.top{padding:calc(var(--st) + 6px) 16px 8px;background:var(--bg);display:flex;align-items:flex-end;gap:10px}
+.top h1{font-size:32px;line-height:1.1;letter-spacing:-.4px;margin:0;flex:1}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;padding:4px 9px;border-radius:99px;background:var(--bg2);color:var(--mute);white-space:nowrap}
+.pill i{width:7px;height:7px;border-radius:50%;background:currentColor}
+.pill.ok{color:var(--acc);background:rgba(0,168,132,.12)}.pill.bad{color:var(--red);background:rgba(255,59,48,.1)}
+.auto{border:0;border-radius:99px;padding:6px 11px;font-size:13px;font-weight:600;background:rgba(0,168,132,.12);color:var(--acc)}
+.auto.off{background:rgba(255,204,0,.2);color:#a07800}
+.sub{display:flex;gap:8px;align-items:center;padding:0 16px 10px}
+.scroll{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:calc(var(--sb) + 76px)}
+.search{margin:0 16px 8px;position:relative}
+.search input{width:100%;height:38px;border-radius:10px;border:0;background:var(--bg2);padding:0 12px 0 34px;font-size:16px;color:var(--ink);outline:none}
+.search svg{position:absolute;left:10px;top:11px;width:16px;height:16px;color:var(--mute)}
+.list{background:var(--card)}
+.crow{display:flex;gap:12px;align-items:center;width:100%;padding:9px 16px;border:0;background:none;text-align:left}
+.crow:active{background:var(--bg2)}
+.av{width:50px;height:50px;border-radius:50%;flex:none;display:grid;place-items:center;font-weight:700;font-size:18px;color:#fff}
+.cmain{flex:1;display:flex;flex-direction:column;gap:2px;border-bottom:1px solid var(--line);padding-bottom:10px;min-width:0}
+.cline{display:flex;gap:8px;align-items:baseline}
+.cname{flex:1;font-weight:600;font-size:16.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ctime{font-size:13px;color:var(--mute);flex:none}.ctime.u{color:var(--acc);font-weight:600}
+.cprev{flex:1;font-size:14.5px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.badge{background:var(--acc);color:#fff;border-radius:99px;font-size:12px;font-weight:700;min-width:20px;height:20px;padding:0 6px;display:grid;place-items:center;flex:none}
+.tick{color:var(--mute)}.tick.r{color:var(--blue)}
+.grp{font-size:13px;font-weight:600;color:var(--mute);text-transform:uppercase;letter-spacing:.3px;padding:18px 16px 6px}
+.card{background:var(--card);border-radius:12px;margin:0 16px 12px;overflow:hidden;border:1px solid var(--line)}
+.row{display:flex;align-items:center;gap:12px;padding:12px 14px;border-top:1px solid var(--line);background:none;border-left:0;border-right:0;border-bottom:0;width:100%;text-align:left}
+.card>.row:first-child{border-top:0}
+.ic{width:34px;height:34px;border-radius:9px;display:grid;place-items:center;flex:none;color:#fff}
+.ic svg{width:18px;height:18px}
+.t{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.s{font-size:13.5px;color:var(--mute);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.col{display:flex;flex-direction:column;flex:1;min-width:0}
+.btn{border:0;border-radius:12px;min-height:46px;padding:0 18px;font-size:16px;font-weight:600;background:var(--acc);color:#fff}
+.btn:active{opacity:.8}.btn.sec{background:var(--bg2);color:var(--ink)}.btn.red{background:rgba(255,59,48,.12);color:var(--red)}
+.btn.sm{min-height:34px;padding:0 12px;font-size:14px;border-radius:9px}.btn.block{width:100%}.btn:disabled{opacity:.45}
+.empty{color:var(--mute);text-align:center;padding:36px 24px;font-size:15px}
+.bar{height:6px;border-radius:6px;background:var(--bg2);overflow:hidden;margin-top:7px}.bar>i{display:block;height:100%;background:var(--acc)}
+label.l{display:block;font-size:13px;color:var(--mute);margin:14px 0 6px}
+.field{width:100%;font-size:16px;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);min-height:46px;outline:none;-webkit-appearance:none}
+.field:focus{border-color:var(--acc)}
+.form{padding:2px 16px 16px}
+/* abas */
+.tabs{position:fixed;left:0;right:0;bottom:0;display:grid;grid-template-columns:repeat(5,1fr);background:var(--tab);-webkit-backdrop-filter:blur(20px);backdrop-filter:blur(20px);border-top:1px solid var(--line);padding:6px 0 calc(var(--sb) + 4px);z-index:5}
+.tabs button{border:0;background:none;color:var(--mute);display:flex;flex-direction:column;align-items:center;gap:2px;font-size:10.5px;font-weight:600;padding:2px 0;position:relative}
+.tabs svg{width:26px;height:26px}.tabs button.on{color:var(--acc)}
+.tabs .dotc{position:absolute;top:0;left:calc(50% + 8px);background:var(--acc);color:#fff;font-size:10px;border-radius:99px;padding:0 5px;min-width:16px;height:16px;line-height:16px}
+/* conversa */
+.chat{position:fixed;inset:0;background:var(--wall);display:flex;flex-direction:column;z-index:8;transform:translateX(100%);transition:transform .26s cubic-bezier(.2,.8,.2,1)}
+.chat.open{transform:none}
+.chead{display:flex;align-items:center;gap:8px;padding:calc(var(--st) + 4px) 10px 8px 4px;background:var(--bg);border-bottom:1px solid var(--line)}
+.back{border:0;background:none;color:var(--acc);display:flex;align-items:center;padding:6px;font-size:17px}
+.back svg{width:24px;height:24px}
+.chead .av{width:38px;height:38px;font-size:15px}
+.chead .col .t{font-size:16.5px}
+.hbtn{border:0;background:var(--bg2);border-radius:99px;width:36px;height:36px;display:grid;place-items:center;color:var(--acc);flex:none}
+.hbtn svg{width:19px;height:19px}
+.msgs{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:10px 10px 6px;display:flex;flex-direction:column;gap:3px}
+.day{align-self:center;background:var(--card);color:var(--mute);font-size:12.5px;font-weight:600;padding:4px 10px;border-radius:8px;margin:8px 0;box-shadow:0 1px 1px rgba(0,0,0,.06)}
+.b{max-width:82%;padding:6px 9px 4px;border-radius:10px;font-size:16px;line-height:1.32;box-shadow:0 1px 1px rgba(0,0,0,.08);word-wrap:break-word;white-space:pre-wrap;position:relative}
+.b.me{align-self:flex-end;background:var(--me);border-top-right-radius:3px}
+.b.th{align-self:flex-start;background:var(--them);border-top-left-radius:3px}
+.b.pend{opacity:.6}
+.b .meta{float:right;margin:6px 0 -2px 10px;font-size:11px;color:var(--mute);display:inline-flex;gap:3px;align-items:center;white-space:nowrap}
+.b img{display:block;max-width:220px;width:100%;border-radius:7px;margin:-2px -5px 4px;filter:blur(.3px)}
+.b .lab{display:flex;align-items:center;gap:6px;font-weight:600;color:var(--mute);font-size:14.5px}
+.banner{background:rgba(255,59,48,.1);color:var(--red);font-size:13.5px;text-align:center;padding:7px 12px}
+.quick{display:flex;gap:7px;overflow-x:auto;padding:8px 10px 4px;background:var(--bg);scrollbar-width:none}
+.quick::-webkit-scrollbar{display:none}
+.chip{flex:none;display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 13px 0 10px;border-radius:99px;border:1px solid var(--line);background:var(--card);font-size:14.5px;font-weight:500;white-space:nowrap}
+.chip.f{border-color:rgba(0,168,132,.45);background:rgba(0,168,132,.1);color:var(--acc-d);font-weight:600}
+@media (prefers-color-scheme:dark){.chip.f{color:var(--acc)}}
+.chip svg{width:15px;height:15px}
+.comp{display:flex;align-items:flex-end;gap:8px;padding:6px 10px calc(var(--sb) + 8px);background:var(--bg)}
+.comp textarea{flex:1;resize:none;max-height:120px;min-height:38px;border-radius:20px;border:1px solid var(--line);background:var(--card);color:var(--ink);font-family:inherit;font-size:16px;line-height:1.3;padding:8px 14px;outline:none}
+.send{width:40px;height:40px;border-radius:50%;border:0;background:var(--acc);color:#fff;display:grid;place-items:center;flex:none}
+.send svg{width:20px;height:20px}.send:disabled{opacity:.4}
+/* folhas */
+.sheet{position:fixed;inset:0;background:rgba(0,0,0,.38);display:flex;align-items:flex-end;z-index:20;animation:fade .18s}
+.sheet>div{background:var(--bg);width:100%;border-radius:14px 14px 0 0;padding:8px 16px calc(var(--sb) + 16px);max-height:86vh;overflow:auto;animation:up .22s cubic-bezier(.2,.8,.2,1)}
+.grab{width:36px;height:5px;border-radius:3px;background:var(--line);margin:0 auto 12px}
+.sheet h3{margin:0 0 4px;font-size:19px}.sheet p{margin:0 0 16px;color:var(--mute)}
+@keyframes up{from{transform:translateY(40px);opacity:.4}to{transform:none;opacity:1}}@keyframes fade{from{opacity:0}}
+.toast{position:fixed;left:50%;top:calc(var(--st) + 10px);transform:translate(-50%,-20px);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;font-size:14.5px;font-weight:500;z-index:30;max-width:88vw;opacity:0;transition:.2s;pointer-events:none}
+.toast.show{opacity:1;transform:translate(-50%,0)}
+.st-pending,.st-running{color:#b38600}.st-done{color:var(--acc)}.st-error{color:var(--red)}
+/* login */
+.login{max-width:420px;margin:0 auto;padding:calc(var(--st) + 60px) 24px 24px}
+.logo{width:64px;height:64px;border-radius:18px;background:linear-gradient(145deg,#00a884,#008069);display:grid;place-items:center;margin-bottom:18px;box-shadow:0 10px 24px rgba(0,128,105,.3)}
+.logo svg{width:34px;height:34px}
+.login h1{font-size:30px;margin:0 0 6px}
+@media (prefers-reduced-motion:reduce){.chat,.sheet,.sheet>div,.toast{transition:none;animation:none}}
 </style>
 </head>
 <body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path fill="currentColor" d="M12 3C6.5 3 2 6.9 2 11.7c0 2.4 1.1 4.6 3 6.2L4 21.5l4.1-1.8c1.2.4 2.5.6 3.9.6 5.5 0 10-3.9 10-8.7S17.5 3 12 3z"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path fill="currentColor" d="M12 22a2.5 2.5 0 0 0 2.4-2h-4.8A2.5 2.5 0 0 0 12 22zm7-6V11a7 7 0 0 0-5.5-6.8V3.5a1.5 1.5 0 0 0-3 0v.7A7 7 0 0 0 5 11v5l-2 2v1h18v-1l-2-2z"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 10.4 3.5 2.1-.9 1.5L11 13V7h2v5.4z"/></symbol>
+    <symbol id="i-rocket" viewBox="0 0 24 24"><path fill="currentColor" d="M13.1 2.2c3.5.3 6.4 3.2 6.7 6.7l-5.3 6.8-6.2-6.2 6.8-5.3-2-2zM7.4 11l5.6 5.6-1.4 1.4-2-.3-1.2 2.5-4.6-4.6 2.5-1.2-.3-2L7.4 11zM15 6.5A1.5 1.5 0 1 0 15 9.5a1.5 1.5 0 0 0 0-3z"/></symbol>
+    <symbol id="i-more" viewBox="0 0 24 24"><path fill="currentColor" d="M12 2a2.2 2.2 0 0 1 2.2 1.8l.2 1.1 1.5.8 1-.5a2.2 2.2 0 0 1 2.8.6 2.2 2.2 0 0 1-.2 2.8l-.7.8v1.8l.7.8a2.2 2.2 0 0 1-2.6 3.4l-1-.5-1.5.8-.2 1.1a2.2 2.2 0 0 1-4.4 0l-.2-1.1-1.5-.8-1 .5a2.2 2.2 0 0 1-2.6-3.4l.7-.8V9.4l-.7-.8a2.2 2.2 0 0 1 2.6-3.4l1 .5 1.5-.8.2-1.1A2.2 2.2 0 0 1 12 2zm0 7a3 3 0 1 0 0 6 3 3 0 0 0 0-6z" transform="translate(0 1.5) scale(1 .88)"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path fill="currentColor" d="M3.4 20.4 21 12 3.4 3.6 3.4 10l12.6 2-12.6 2z"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="M15 5l-7 7 7 7"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M10.5 4a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13zM20 20l-4.6-4.6"/></symbol>
+    <symbol id="i-funnel" viewBox="0 0 24 24"><path fill="currentColor" d="M7 7h10V4l4 4-4 4V9H7v3H5V8a1 1 0 0 1 1-1h1zm10 10H7v3l-4-4 4-4v3h10v-3h2v4a1 1 0 0 1-1 1h-1z"/></symbol>
+    <symbol id="i-text" viewBox="0 0 24 24"><path fill="currentColor" d="M4 4h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H8l-4 4V6a2 2 0 0 1 0-2zm3 5v2h10V9H7zm0 4v2h7v-2H7z"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><path fill="currentColor" d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-6a3.5 3.5 0 0 0-7 0v6A3.5 3.5 0 0 0 12 15zm6-3.5h-1.8a4.2 4.2 0 0 1-8.4 0H6a6 6 0 0 0 5 5.9V21h2v-3.6a6 6 0 0 0 5-5.9z"/></symbol>
+    <symbol id="i-image" viewBox="0 0 24 24"><path fill="currentColor" d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zM5 17l3.5-4.5 2.5 3 3.5-4.5L19 17H5z"/></symbol>
+    <symbol id="i-doc" viewBox="0 0 24 24"><path fill="currentColor" d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6zm-1 7V3.5L18.5 9H13z"/></symbol>
+    <symbol id="i-bolt" viewBox="0 0 24 24"><path fill="#ffd60a" d="M13.5 2 5 13.5h6l-1.5 8.5L18 10.5h-6L13.5 2z"/></symbol>
+    <symbol id="i-new" viewBox="0 0 24 24"><path fill="currentColor" d="M3 17.3V21h3.7l11-11-3.7-3.7-11 11zm17.7-10.1a1 1 0 0 0 0-1.4l-2.5-2.5a1 1 0 0 0-1.4 0l-1.8 1.8 3.7 3.7 2-1.6z"/></symbol>
+  </defs>
+</svg>
+
 <div id="login" class="login hide">
-  <div class="top"><div class="logo">⚡</div><h1>ZapFunil</h1></div>
-  <p class="s" style="white-space:normal">Entre com a mesma conta que você conectou na extensão do Chrome (aba 📱 Celular do painel).</p>
+  <div class="logo"><svg><use href="#i-bolt"/></svg></div>
+  <h1>ZapFunil</h1>
+  <p class="s" style="white-space:normal;font-size:15px">Entre com a conta que você conectou na extensão do Chrome (aba Celular do painel).</p>
   <form id="loginForm">
-    <label for="em">E-mail</label><input id="em" type="email" autocomplete="username" required>
-    <label for="pw">Senha</label><input id="pw" type="password" autocomplete="current-password" required>
-    <div style="height:14px"></div>
+    <label class="l" for="em">E-mail</label><input class="field" id="em" type="email" autocomplete="username" required>
+    <label class="l" for="pw">Senha</label><input class="field" id="pw" type="password" autocomplete="current-password" required>
+    <div style="height:18px"></div>
     <button class="btn block" id="loginBtn">Entrar</button>
   </form>
-  <p class="s" id="loginErr" style="color:var(--red);white-space:normal"></p>
+  <p id="loginErr" style="color:var(--red);font-size:14px"></p>
 </div>
 
-<div id="app" class="hide">
-  <div class="top">
-    <div class="logo">⚡</div>
-    <div class="col"><h1 id="title">Enviar</h1><span class="s" id="macSt">conectando…</span></div>
-    <button class="auto" id="autoBtn">Auto</button>
+<div id="app" class="shell hide">
+  <div class="top"><h1 id="title">Conversas</h1><button class="auto" id="autoBtn">Auto</button></div>
+  <div class="sub"><span id="macSt" class="pill">conectando…</span><span class="grow"></span></div>
+  <div class="scroll" id="scroll">
+    <section id="v-chats"></section>
+    <section id="v-rmkt" class="hide"></section>
+    <section id="v-agenda" class="hide"></section>
+    <section id="v-camp" class="hide"></section>
+    <section id="v-more" class="hide"></section>
   </div>
-  <section id="v-send"></section>
-  <section id="v-rmkt" class="hide"></section>
-  <section id="v-agenda" class="hide"></section>
-  <section id="v-camp" class="hide"></section>
-  <section id="v-log" class="hide"></section>
+  <nav class="tabs" id="tabs">
+    <button data-v="chats" class="on"><svg><use href="#i-chat"/></svg>Conversas</button>
+    <button data-v="rmkt"><svg><use href="#i-bell"/></svg>Remarketing</button>
+    <button data-v="agenda"><svg><use href="#i-clock"/></svg>Agenda</button>
+    <button data-v="camp"><svg><use href="#i-rocket"/></svg>Campanhas</button>
+    <button data-v="more"><svg><use href="#i-more"/></svg>Mais</button>
+  </nav>
 </div>
 
-<nav id="nav" class="hide">
-  <button data-v="send" class="on"><b>⚡</b>Enviar</button>
-  <button data-v="rmkt"><b>🔔</b>Rmkt</button>
-  <button data-v="agenda"><b>⏰</b>Agenda</button>
-  <button data-v="camp"><b>🚀</b>Campanhas</button>
-  <button data-v="log"><b>📜</b>Atividade</button>
-</nav>
+<div id="chat" class="chat" aria-hidden="true">
+  <div class="chead">
+    <button class="back" id="back" aria-label="Voltar"><svg><use href="#i-back"/></svg></button>
+    <div class="av" id="cAv"></div>
+    <div class="col"><span class="t" id="cName"></span><span class="s" id="cSub"></span></div>
+    <button class="hbtn" id="cRmkt" aria-label="Remarketing"><svg><use href="#i-bell"/></svg></button>
+  </div>
+  <div class="banner hide" id="cBanner"></div>
+  <div class="msgs" id="msgs"></div>
+  <div class="quick" id="quick"></div>
+  <div class="comp">
+    <textarea id="txt" rows="1" placeholder="Mensagem"></textarea>
+    <button class="send" id="sendBtn" aria-label="Enviar" disabled><svg><use href="#i-send"/></svg></button>
+  </div>
+</div>
+
 <div id="sheet" class="sheet hide"><div id="sheetBox"></div></div>
 <div id="toast" class="toast"></div>
 
@@ -101,14 +201,16 @@ nav button b{font-size:20px;font-weight:400}nav button.on{color:var(--acc)}
 const CONFIG = { url: 'https://kjntxjencxxauhzulera.supabase.co', key: 'sb_publishable_UsD2jKHI97zFRkSHkM87iA_G0KKfrWq' };
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const ICON = { text: '💬', audio: '🎤', image: '🖼️', video: '🎬', document: '📄', funnel: '🔁' };
-const TYPE_ORDER = [['funnel', 'Funis'], ['text', 'Mensagens'], ['audio', 'Áudios'], ['image', 'Mídias'], ['document', 'Documentos']];
-let S = null, cmds = [], view = 'send', contact = null, q = '', stateAt = null, pollT = null;
+const svg = (id) => `<svg><use href="#i-${id}"/></svg>`;
+const TYPE = { funnel: ['funnel', '#00a884', 'Funis'], text: ['text', '#34aadc', 'Mensagens'], audio: ['mic', '#ff9500', 'Áudios'], image: ['image', '#af52de', 'Mídias'], video: ['image', '#af52de', 'Mídias'], document: ['doc', '#8e8e93', 'Documentos'] };
+const ORDER = { funnel: 0, text: 1, audio: 2, image: 3, video: 3, document: 4 };
+const HIDE_KINDS = ['watch_chat'];
+let S = null, stateAt = null, cmds = [], view = 'chats', q = '', pollT = null;
+let chat = null; // { id, name, msgs, at, pend:[] }
+let chatT = null, watchAt = 0;
 
-// ---------- armazenamento local seguro
 const ls = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }, del(k) { try { localStorage.removeItem(k); } catch (e) {} } };
-
-function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 2600); }
+function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 2400); }
 
 // ---------- Supabase (REST)
 async function authReq(path, body) {
@@ -117,7 +219,7 @@ async function authReq(path, body) {
   if (!r.ok) throw new Error(j.msg || j.error_description || j.message || 'Erro ' + r.status);
   return j;
 }
-function saveSession(j) { ls.set('zf_sess', { at: j.access_token, rt: j.refresh_token, exp: Date.now() + (j.expires_in || 3600) * 1000, email: j.user && j.user.email }); }
+function saveSession(j) { ls.set('zf_sess', { at: j.access_token, rt: j.refresh_token, exp: Date.now() + (j.expires_in || 3600) * 1000 }); }
 let refreshing = null;
 async function token() {
   const s = ls.get('zf_sess');
@@ -136,166 +238,263 @@ async function rest(path, opts) {
   const txt = await r.text();
   return txt ? JSON.parse(txt) : null;
 }
-async function send(kind, payload, label) {
-  if (!macOnline()) toast('⚠️ O Mac parece offline. O comando espera até 15 min.');
+async function command(kind, payload, label, quiet) {
+  if (!macOnline() && !quiet) toast('O Mac parece offline — o pedido espera até 15 min');
   const rows = await rest('zf_commands', { method: 'POST', headers: { Prefer: 'return=representation' }, body: { kind, payload } });
   const row = rows && rows[0];
-  if (row) { row.label = label; cmds.unshift(row); const lab = ls.get('zf_labels') || {}; lab[row.id] = label; ls.set('zf_labels', lab); }
-  render();
+  if (row && label) { row.label = label; cmds.unshift(row); const lab = ls.get('zf_labels') || {}; lab[row.id] = label; ls.set('zf_labels', lab); }
   fastPoll();
   return row;
 }
 
-// ---------- ciclo
+// ---------- ciclo de atualização
 function macOnline() { return !!(stateAt && Date.now() - stateAt < 75000 && S && S.waReady); }
 async function refresh() {
   try {
     const st = await rest('zf_state?select=data,updated_at');
     if (st && st[0]) { S = st[0].data || {}; stateAt = new Date(st[0].updated_at).getTime(); }
-    const c = await rest('zf_commands?select=id,kind,payload,status,result,created_at,done_at&order=id.desc&limit=25');
+    const c = await rest('zf_commands?select=id,kind,payload,status,result,created_at&order=id.desc&limit=30');
     const lab = ls.get('zf_labels') || {};
-    cmds = (c || []).map((x) => Object.assign(x, { label: lab[x.id] || x.kind }));
+    cmds = (c || []).filter((x) => !HIDE_KINDS.includes(x.kind)).map((x) => Object.assign(x, { label: lab[x.id] || x.kind }));
     render();
-  } catch (e) { if (e.message !== 'login') $('#macSt').textContent = 'sem conexão: ' + e.message.slice(0, 40); }
+  } catch (e) { if (e.message !== 'login') { $('#macSt').className = 'pill bad'; $('#macSt').innerHTML = '<i></i>sem internet'; } }
 }
 function schedule(ms) { clearTimeout(pollT); pollT = setTimeout(async () => { if (document.visibilityState === 'visible') await refresh(); schedule(cmds.some((c) => c.status === 'pending' || c.status === 'running') ? 2500 : 6000); }, ms); }
-function fastPoll() { schedule(1500); }
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { refresh(); fastPoll(); } });
+function fastPoll() { schedule(1200); }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { refresh(); fastPoll(); if (chat) { watchChat(true); pollChat(); } } });
 
 // ---------- login
-function logout() { ls.del('zf_sess'); $('#app').classList.add('hide'); $('#nav').classList.add('hide'); $('#login').classList.remove('hide'); }
+function logout() { ls.del('zf_sess'); closeChat(); $('#app').classList.add('hide'); $('#login').classList.remove('hide'); }
 $('#loginForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   $('#loginBtn').disabled = true; $('#loginErr').textContent = '';
   try { const j = await authReq('token?grant_type=password', { email: $('#em').value.trim(), password: $('#pw').value }); saveSession(j); start(); }
-  catch (err) { $('#loginErr').textContent = /confirm/i.test(err.message) ? 'Confirme seu e-mail primeiro (link que o Supabase mandou).' : /invalid/i.test(err.message) ? 'E-mail ou senha incorretos.' : err.message; }
+  catch (err) { $('#loginErr').textContent = /confirm/i.test(err.message) ? 'Confirme seu e-mail primeiro.' : /invalid/i.test(err.message) ? 'E-mail ou senha incorretos.' : err.message; }
   finally { $('#loginBtn').disabled = false; }
 });
-function start() { $('#login').classList.add('hide'); $('#app').classList.remove('hide'); $('#nav').classList.remove('hide'); render(); refresh(); fastPoll(); }
+function start() { $('#login').classList.add('hide'); $('#app').classList.remove('hide'); render(); refresh(); fastPoll(); }
 
-// ---------- navegação
-document.querySelectorAll('#nav button').forEach((b) => b.addEventListener('click', () => { view = b.dataset.v; document.querySelectorAll('#nav button').forEach((x) => x.classList.toggle('on', x === b)); render(); window.scrollTo(0, 0); }));
-$('#autoBtn').addEventListener('click', async () => {
-  if (!S) return;
-  const paused = !S.paused;
-  try { await send('automations', { paused }, paused ? 'Pausar automações' : 'Ligar automações'); S.paused = paused; render(); } catch (e) { toast(e.message); }
-});
+// ---------- utilidades de exibição
+const num = (id) => String(id || '').replace(/@.*/, '');
+const isPhone = (id) => /^\d{8,15}$/.test(num(id));
+const fmtNum = (id) => (isPhone(id) ? '+' + num(id) : '');
+const normNum = (raw) => { const s = String(raw || '').trim(); let d = s.replace(/\D/g, ''); if (!d) return ''; if (s.startsWith('+')) return d; if (d.startsWith('00')) return d.slice(2); if ((d.length === 10 || d.length === 11) && !d.startsWith('55')) d = '55' + d; return d; };
+const COLORS = ['#25d366', '#34aadc', '#ff9500', '#af52de', '#ff2d55', '#5856d6', '#00a884', '#ff6b5e', '#30b0c7', '#a2845e'];
+function avatar(name, id, size) { const k = String(id || name || '?'); let h = 0; for (const ch of k) h = (h * 31 + ch.charCodeAt(0)) >>> 0; const ini = (String(name || '').trim().split(/\s+/).map((w) => w[0]).filter((c) => /\p{L}/u.test(c || '')).slice(0, 2).join('') || '#').toUpperCase(); return `<div class="av" style="background:${COLORS[h % COLORS.length]}${size ? ';width:' + size + 'px;height:' + size + 'px;font-size:' + Math.round(size * 0.38) + 'px' : ''}">${esc(ini)}</div>`; }
+function when(tsMs) { if (!tsMs) return ''; const d = new Date(tsMs), n = new Date(); const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime(); const diff = (day(n) - day(d)) / 86400000; if (diff === 0) return d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); if (diff === 1) return 'Ontem'; if (diff < 7) return d.toLocaleDateString('pt-BR', { weekday: 'long' }); return d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit' }); }
+const hm = (ms) => new Date(ms).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+const whenFull = (ms) => { const w = when(ms); return /^\d\d:\d\d$/.test(w) ? w : w + ' ' + hm(ms); };
+function ticks(ack) { if (!ack) return '<span class="tick">🕓</span>'; return ack >= 3 ? '<span class="tick r">✓✓</span>' : ack === 2 ? '<span class="tick">✓✓</span>' : '<span class="tick">✓</span>'; }
+function typeIcon(t, size) { const [ic, color] = TYPE[t] || TYPE.text; return `<span class="ic" style="background:${color}${size ? ';width:' + size + 'px;height:' + size + 'px' : ''}">${svg(ic)}</span>`; }
+function entries() {
+  if (!S) return [];
+  return [...(S.funnels || []).map((f, i) => ({ kind: 'funnel', t: 'funnel', id: f.id, name: f.name, sub: f.steps + ' etapa(s)', i })),
+    ...(S.items || []).map((x, i) => ({ kind: 'item', t: x.type, id: x.id, name: x.name, sub: x.type === 'audio' ? 'Áudio ' + Math.round(x.duration || 0) + 's' : x.text || TYPE[x.type][2], i }))]
+    .sort((a, b) => ORDER[a.t] - ORDER[b.t] || (a.kind === b.kind ? a.i - b.i : 0));
+}
 
-// ---------- sheet (confirmação)
-function sheet(html, bind) { $('#sheetBox').innerHTML = html; $('#sheet').classList.remove('hide'); bind && bind($('#sheetBox')); }
+// ---------- folhas (confirmação e escolhas)
+function sheet(html, bind) { $('#sheetBox').innerHTML = '<div class="grab"></div>' + html; $('#sheet').classList.remove('hide'); bind && bind($('#sheetBox')); }
 function closeSheet() { $('#sheet').classList.add('hide'); }
 $('#sheet').addEventListener('click', (e) => { if (e.target.id === 'sheet') closeSheet(); });
+function confirmSend(entry, target, name) {
+  sheet(`<h3>Enviar agora?</h3><p>${esc(entry.name)} → ${esc(name || fmtNum(target))}</p><div style="display:flex;gap:10px"><button class="btn sec block" id="no">Cancelar</button><button class="btn block" id="ok">Enviar</button></div>`, (box) => {
+    box.querySelector('#no').onclick = closeSheet;
+    box.querySelector('#ok').onclick = async () => {
+      closeSheet();
+      try { await command('send', { target, name, targetType: entry.kind, targetId: entry.id }, entry.name + ' → ' + (name || fmtNum(target))); toast('Enviando pelo Mac…'); if (chat) setTimeout(pollChat, 2500); } catch (e) { toast(e.message); }
+    };
+  });
+}
+function pickRule(target, name) {
+  const rules = (S && S.rules) || [];
+  const inQ = ((S && S.queue) || []).filter((e) => e.chatId === target);
+  sheet(`<h3>Remarketing</h3><p>${esc(name || fmtNum(target))}</p>
+    ${inQ.length ? `<div class="card" style="margin:0 0 12px">${inQ.map((e) => `<div class="row"><div class="col"><span class="t">${esc(e.rule)}</span><span class="s">etapa ${e.stage}/${e.total} · ${e.dueAt ? 'envia ' + whenFull(e.dueAt) : 'esperando você'}</span></div><button class="btn red sm" data-x="${esc(e.id)}">Parar</button></div>`).join('')}</div>` : ''}
+    <div class="grp" style="padding:0 0 6px">Colocar em</div>
+    <div class="card" style="margin:0 0 12px">${rules.map((r) => `<button class="row" data-r="${esc(r.id)}">${typeIcon('funnel')}<span class="col"><span class="t">${esc(r.name)}${r.enabled ? '' : ' (pausada)'}</span><span class="s">${r.stages} etapa(s) · ${r.mode === 'inactive' ? 'conversa parada' : 'se não responder'}</span></span></button>`).join('') || '<div class="empty">Nenhuma regra criada no painel.</div>'}</div>
+    <button class="btn sec block" id="no">Fechar</button>`, (box) => {
+    box.querySelector('#no').onclick = closeSheet;
+    box.querySelectorAll('[data-r]').forEach((b) => (b.onclick = async () => { closeSheet(); try { await command('rmkt_enqueue', { target, name, ruleId: b.dataset.r }, 'Remarketing → ' + (name || fmtNum(target))); toast('Colocando no remarketing…'); } catch (e) { toast(e.message); } }));
+    box.querySelectorAll('[data-x]').forEach((b) => (b.onclick = async () => { closeSheet(); try { await command('rmkt_cancel', { entryId: b.dataset.x }, 'Parar remarketing'); toast('Parando…'); } catch (e) { toast(e.message); } }));
+  });
+}
 
-const fmtT = (ts) => { if (!ts) return '-'; const d = new Date(ts); const today = new Date().toDateString() === d.toDateString(); return today ? d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); };
-const num = (id) => String(id || '').replace(/@.*/, '');
-const normNum = (raw) => { const s = String(raw || '').trim(); let d = s.replace(/\D/g, ''); if (!d) return ''; if (s.startsWith('+')) return d; if (d.startsWith('00')) return d.slice(2); if ((d.length === 10 || d.length === 11) && !d.startsWith('55')) d = '55' + d; return d; };
+// ---------- telas principais
+$('#tabs').addEventListener('click', (e) => { const b = e.target.closest('button'); if (!b) return; view = b.dataset.v; document.querySelectorAll('#tabs button').forEach((x) => x.classList.toggle('on', x === b)); render(); $('#scroll').scrollTop = 0; });
+$('#autoBtn').addEventListener('click', async () => { if (!S) return; const paused = !S.paused; try { await command('automations', { paused }, paused ? 'Pausar automações' : 'Ligar automações'); S.paused = paused; render(); toast(paused ? 'Pausando automações…' : 'Ligando automações…'); } catch (e) { toast(e.message); } });
 
-// ---------- telas
 function render() {
   const on = macOnline();
-  $('#macSt').innerHTML = !S ? 'aguardando o Mac…' : on ? '<span class="pill ok">● Mac online</span>' : '<span class="pill bad">● Mac offline' + (stateAt ? ' desde ' + fmtT(stateAt) : '') + '</span>';
-  const ab = $('#autoBtn'); ab.textContent = S && S.paused ? '⏸ Auto OFF' : '▶ Auto ON'; ab.classList.toggle('off', !!(S && S.paused));
-  ['send', 'rmkt', 'agenda', 'camp', 'log'].forEach((v) => $('#v-' + v).classList.toggle('hide', v !== view));
-  $('#title').textContent = { send: 'Enviar', rmkt: 'Remarketing', agenda: 'Agenda', camp: 'Campanhas', log: 'Atividade' }[view];
-  ({ send: rSend, rmkt: rRmkt, agenda: rAgenda, camp: rCamp, log: rLog })[view]();
+  const st = $('#macSt');
+  st.className = 'pill ' + (!S ? '' : on ? 'ok' : 'bad');
+  st.innerHTML = '<i></i>' + (!S ? 'esperando o Mac…' : on ? 'Mac online' : 'Mac offline' + (stateAt ? ' · ' + when(stateAt) : ''));
+  const ab = $('#autoBtn'); ab.textContent = S && S.paused ? 'Auto OFF' : 'Auto ON'; ab.classList.toggle('off', !!(S && S.paused));
+  ['chats', 'rmkt', 'agenda', 'camp', 'more'].forEach((v) => $('#v-' + v).classList.toggle('hide', v !== view));
+  $('#title').textContent = { chats: 'Conversas', rmkt: 'Remarketing', agenda: 'Agenda', camp: 'Campanhas', more: 'Mais' }[view];
+  ({ chats: rChats, rmkt: rRmkt, agenda: rAgenda, camp: rCamp, more: rMore })[view]();
+  if (chat) renderChat();
 }
 
-function contactPicker(target, onPick) {
-  const chats = (S && S.chats) || [];
-  const f = q.toLowerCase();
-  const list = chats.filter((c) => !f || (c.name || '').toLowerCase().includes(f) || num(c.id).includes(f.replace(/\D/g, '') || '§')).slice(0, 40);
-  const typed = normNum(q);
-  target.innerHTML = `<input id="cq" placeholder="Buscar conversa ou digitar número" value="${esc(q)}" inputmode="search" autocomplete="off">
-    <div class="card" style="margin-top:10px">${typed.length >= 10 && !/[a-z]/i.test(q) ? `<button class="row" data-num="${typed}"><span class="ic">📞</span><span class="col"><span class="t">+${typed}</span><span class="s">Usar este número</span></span></button>` : ''}
-    ${list.map((c) => `<button class="row" data-id="${esc(c.id)}" data-name="${esc(c.name)}"><span class="ic">👤</span><span class="col"><span class="t">${esc(c.name || '+' + num(c.id))}</span><span class="s">${esc(num(c.id).length > 13 ? 'contato' : '+' + num(c.id))} · ${fmtT((c.t || 0) * 1000)}</span></span>${c.unread ? `<span class="badge">${c.unread}</span>` : ''}</button>`).join('') || '<div class="empty">Nenhuma conversa encontrada.</div>'}</div>`;
-  const inp = target.querySelector('#cq');
-  inp.addEventListener('input', () => { q = inp.value; const pos = inp.selectionStart; contactPicker(target, onPick); const n = target.querySelector('#cq'); n.focus(); n.setSelectionRange(pos, pos); });
-  target.querySelectorAll('[data-id]').forEach((b) => b.addEventListener('click', () => onPick({ target: b.dataset.id, name: b.dataset.name })));
-  target.querySelectorAll('[data-num]').forEach((b) => b.addEventListener('click', () => onPick({ target: b.dataset.num, name: '' })));
-}
-
-function itemsList(onPick) {
-  if (!S) return '<div class="empty">Esperando o Mac mandar seus funis…</div>';
-  const all = [...(S.funnels || []).map((f) => ({ k: 'funnel', id: f.id, name: f.name, sub: f.steps + ' etapa(s)', t: 'funnel' })),
-    ...(S.items || []).map((i) => ({ k: 'item', id: i.id, name: i.name, sub: i.type === 'audio' ? 'Áudio ' + Math.round(i.duration || 0) + 's' : i.text || '', t: i.type === 'video' ? 'image' : i.type }))];
-  return TYPE_ORDER.map(([t, label]) => { const g = all.filter((x) => x.t === t); if (!g.length) return ''; return `<div class="grp">${label}</div>` + g.map((x) => `<button class="row" data-k="${x.k}" data-id="${esc(x.id)}" data-name="${esc(x.name)}"><span class="ic">${ICON[t]}</span><span class="col"><span class="t">${esc(x.name)}</span><span class="s">${esc(x.sub)}</span></span></button>`).join(''); }).join('') || '<div class="empty">Nenhum item. Crie no painel da extensão.</div>';
-}
-
-function rSend() {
-  const el = $('#v-send');
-  if (!contact) {
-    el.innerHTML = '<h2>1. Para quem?</h2><div id="pick"></div>';
-    contactPicker(el.querySelector('#pick'), (c) => { contact = c; q = ''; render(); });
-    return;
+function rChats() {
+  const el = $('#v-chats');
+  if (!el.querySelector('#cq')) {
+    el.innerHTML = `<div class="search">${svg('search')}<input id="cq" placeholder="Buscar ou digitar número" autocomplete="off" inputmode="search"></div><div id="clist" class="list"></div>`;
+    el.querySelector('#cq').addEventListener('input', (e) => { q = e.target.value; rChatList(); });
   }
-  const running = ((S && S.running) || []).filter((r) => r.chatId === contact.target);
-  el.innerHTML = `<div class="chip"><span class="ic">👤</span><span class="col"><span class="t">${esc(contact.name || '+' + num(contact.target))}</span><span class="s">${esc(num(contact.target).length > 13 ? '' : '+' + num(contact.target))}</span></span><button class="btn sec sm" id="chg">Trocar</button></div>
-    ${running.map((r) => `<div class="s" style="margin:-4px 0 8px">▶ ${esc(r.label)} (${r.step}/${r.total})${r.queued ? ' · +' + r.queued + ' na fila' : ''}</div>`).join('')}
-    <h2>2. O que enviar?</h2><div class="card">${itemsList()}</div>
-    <button class="btn sec block" id="toRmkt">🔔 Colocar em remarketing</button>`;
-  el.querySelector('#chg').addEventListener('click', () => { contact = null; render(); });
-  el.querySelectorAll('[data-k]').forEach((b) => b.addEventListener('click', () => {
-    const who = contact.name || '+' + num(contact.target);
-    sheet(`<h3>Enviar agora?</h3><p class="s" style="white-space:normal">${ICON[b.dataset.k === 'funnel' ? 'funnel' : 'text']} <b>${esc(b.dataset.name)}</b> → ${esc(who)}</p><button class="btn block" id="ok">Enviar</button><div style="height:8px"></div><button class="btn sec block" id="no">Cancelar</button>`, (box) => {
-      box.querySelector('#no').onclick = closeSheet;
-      box.querySelector('#ok').onclick = async () => { closeSheet(); try { await send('send', { target: contact.target, name: contact.name, targetType: b.dataset.k, targetId: b.dataset.id }, b.dataset.name + ' → ' + who); toast('Enviado para o Mac ✓'); } catch (e) { toast(e.message); } };
-    });
-  }));
-  el.querySelector('#toRmkt').addEventListener('click', () => pickRule(contact));
+  rChatList();
 }
-
-function pickRule(c) {
-  const rules = (S && S.rules) || [];
-  sheet(`<h3>Qual remarketing?</h3><div class="card">${rules.map((r) => `<button class="row" data-r="${esc(r.id)}"><span class="ic">🔔</span><span class="col"><span class="t">${esc(r.name)}${r.enabled ? '' : ' (pausada)'}</span><span class="s">${r.stages} etapa(s) · ${r.mode === 'inactive' ? 'conversa parada' : 'se não responder'}</span></span></button>`).join('') || '<div class="empty">Nenhuma regra criada.</div>'}</div><button class="btn sec block" id="no">Fechar</button>`, (box) => {
-    box.querySelector('#no').onclick = closeSheet;
-    box.querySelectorAll('[data-r]').forEach((b) => (b.onclick = async () => { closeSheet(); try { await send('rmkt_enqueue', { target: c.target, name: c.name, ruleId: b.dataset.r }, 'Remarketing → ' + (c.name || num(c.target))); toast('Pedido enviado ✓'); } catch (e) { toast(e.message); } }));
-  });
+function rChatList() {
+  const list = $('#clist'); if (!list) return;
+  const chats = (S && S.chats) || [];
+  const f = q.trim().toLowerCase(), fd = f.replace(/\D/g, '');
+  const shown = chats.filter((c) => !f || (c.name || '').toLowerCase().includes(f) || (fd.length >= 3 && num(c.id).includes(fd)));
+  const typed = normNum(q);
+  let h = '';
+  if (typed.length >= 10 && !/[a-z]/i.test(q) && !shown.some((c) => num(c.id) === typed)) h += `<button class="crow" data-open="${typed}@c.us" data-name=""><div class="av" style="background:var(--acc)">${svg('new')}</div><div class="cmain"><div class="cline"><span class="cname">+${typed}</span></div><div class="cline"><span class="cprev">Abrir conversa com este número</span></div></div></button>`;
+  h += shown.map((c) => {
+    const l = c.last;
+    return `<button class="crow" data-open="${esc(c.id)}" data-name="${esc(c.name)}">${avatar(c.name || fmtNum(c.id), c.id)}<div class="cmain"><div class="cline"><span class="cname">${esc(c.name || fmtNum(c.id) || 'Contato')}</span><span class="ctime${c.unread ? ' u' : ''}">${when((c.t || 0) * 1000)}</span></div>
+      <div class="cline"><span class="cprev">${l && l.fromMe ? ticks(l.ack) + ' ' : ''}${esc(l ? l.text : fmtNum(c.id))}</span>${c.unread ? `<span class="badge">${c.unread}</span>` : ''}</div></div></button>`;
+  }).join('');
+  if (!h) h = `<div class="empty">${S ? 'Nenhuma conversa encontrada.' : 'Esperando o Mac enviar suas conversas…<br><br>Deixe o WhatsApp Web aberto no Mac.'}</div>`;
+  list.innerHTML = h;
+  list.querySelectorAll('[data-open]').forEach((b) => (b.onclick = () => openChat(b.dataset.open, b.dataset.name)));
 }
 
 function rRmkt() {
   const qd = (S && S.queue) || [];
-  $('#v-rmkt').innerHTML = `<p class="s" style="white-space:normal">Contatos aguardando o próximo follow-up. Se o lead responder, sai sozinho.</p>
-    <div class="card">${qd.map((e) => `<div class="row"><span class="ic">🔔</span><span class="col"><span class="t">${esc(e.name || '+' + num(e.chatId))}</span><span class="s">${esc(e.rule)} · etapa ${e.stage}/${e.total} · ${e.dueAt ? 'envia ' + fmtT(e.dueAt) : 'esperando você responder'}</span></span><button class="btn red sm" data-x="${esc(e.id)}">Parar</button></div>`).join('') || '<div class="empty">Ninguém em remarketing agora.</div>'}</div>`;
-  $('#v-rmkt').querySelectorAll('[data-x]').forEach((b) => b.addEventListener('click', async () => { b.disabled = true; try { await send('rmkt_cancel', { entryId: b.dataset.x }, 'Parar remarketing'); toast('Parando…'); } catch (e) { toast(e.message); b.disabled = false; } }));
+  $('#v-rmkt').innerHTML = `<p class="s" style="white-space:normal;padding:0 16px 10px">Contatos aguardando o próximo follow-up. Se o lead responder, sai sozinho.</p>
+    <div class="card">${qd.map((e) => `<div class="row">${avatar(e.name || fmtNum(e.chatId), e.chatId, 38)}<span class="col"><span class="t">${esc(e.name || fmtNum(e.chatId))}</span><span class="s">${esc(e.rule)} · etapa ${e.stage}/${e.total} · ${e.dueAt ? whenFull(e.dueAt) : 'esperando você'}</span></span><button class="btn red sm" data-x="${esc(e.id)}">Parar</button></div>`).join('') || '<div class="empty">Ninguém em remarketing agora.</div>'}</div>
+    <div class="grp">Regras</div><div class="card">${((S && S.rules) || []).map((r) => `<div class="row">${typeIcon('funnel')}<span class="col"><span class="t">${esc(r.name)}</span><span class="s">${r.enabled ? 'Ativa' : 'Pausada'} · ${r.stages} etapa(s)</span></span></div>`).join('') || '<div class="empty">Crie regras no painel da extensão.</div>'}</div>`;
+  $('#v-rmkt').querySelectorAll('[data-x]').forEach((b) => (b.onclick = async () => { b.disabled = true; try { await command('rmkt_cancel', { entryId: b.dataset.x }, 'Parar remarketing'); toast('Parando…'); } catch (e) { toast(e.message); b.disabled = false; } }));
 }
 
 function rAgenda() {
+  const el = $('#v-agenda');
   const sc = (S && S.schedules) || [];
-  const opts = !S ? '' : [...(S.funnels || []).map((f) => `<option value="funnel:${esc(f.id)}">🔁 ${esc(f.name)}</option>`), ...(S.items || []).map((i) => `<option value="item:${esc(i.id)}">${ICON[i.type] || ''} ${esc(i.name)}</option>`)].join('');
-  const d = new Date(Date.now() + 3600000); const p = (n) => String(n).padStart(2, '0');
-  const def = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
-  $('#v-agenda').innerHTML = `<div class="card" style="padding:4px 14px 14px"><label for="an">Número (com DDD)</label><input id="an" inputmode="tel" placeholder="11 99999-8888" value="${esc(contact && /^\d+$/.test(num(contact.target)) && num(contact.target).length <= 13 ? num(contact.target) : '')}">
-    <label for="aw">Enviar</label><select id="aw">${opts}</select>
-    <label for="at">Quando</label><input id="at" type="datetime-local" value="${def}">
-    <div style="height:12px"></div><button class="btn block" id="ag">Agendar</button></div>
-    <h2>Agendados</h2><div class="card">${sc.map((x) => `<div class="row"><span class="ic">⏰</span><span class="col"><span class="t">${esc(x.target)}</span><span class="s">${fmtT(x.at)} · ${esc(x.numbers.map((n) => '+' + n).join(', '))}${x.n > 5 ? ' +' + (x.n - 5) : ''}${x.status === 'paused' ? ' · pausado' : ''}</span></span><button class="btn sec sm" data-x="${esc(x.id)}">✕</button></div>`).join('') || '<div class="empty">Nada agendado.</div>'}</div>`;
-  $('#ag').addEventListener('click', async () => {
-    const n = normNum($('#an').value); if (n.length < 10) return toast('Número inválido');
-    const [tt, ...rest2] = $('#aw').value.split(':'); const at = new Date($('#at').value);
-    if (!+at || at < Date.now() - 60000) return toast('Escolha um horário no futuro');
-    try { await send('schedule', { numbers: [n], targetType: tt, targetId: rest2.join(':'), at: at.toISOString() }, 'Agendar ' + $('#aw').selectedOptions[0].text.trim() + ' → +' + n); toast('Agendando…'); } catch (e) { toast(e.message); }
-  });
-  $('#v-agenda').querySelectorAll('[data-x]').forEach((b) => b.addEventListener('click', async () => { try { await send('schedule_cancel', { id: b.dataset.x }, 'Remover agendamento'); toast('Removendo…'); } catch (e) { toast(e.message); } }));
+  if (!el.querySelector('#ag')) {
+    const d = new Date(Date.now() + 3600000); const p = (n) => String(n).padStart(2, '0');
+    el.innerHTML = `<div class="card"><div class="form"><label class="l" for="an">Número (com DDD)</label><input class="field" id="an" inputmode="tel" placeholder="11 99999-8888">
+      <label class="l" for="aw">Enviar</label><select class="field" id="aw"></select>
+      <label class="l" for="at">Quando</label><input class="field" id="at" type="datetime-local" value="${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}">
+      <div style="height:14px"></div><button class="btn block" id="ag">Agendar</button></div></div><div class="grp">Agendados</div><div class="card" id="aglist"></div>`;
+    el.querySelector('#ag').onclick = async () => {
+      const n = normNum($('#an').value); if (n.length < 10) return toast('Número inválido');
+      const [tt, ...rest2] = $('#aw').value.split(':'); const at = new Date($('#at').value);
+      if (!$('#aw').value) return toast('Escolha o que enviar');
+      if (!+at || at < Date.now() - 60000) return toast('Escolha um horário no futuro');
+      try { await command('schedule', { numbers: [n], targetType: tt, targetId: rest2.join(':'), at: at.toISOString() }, 'Agendar ' + $('#aw').selectedOptions[0].text + ' → +' + n); toast('Agendando…'); $('#an').value = ''; } catch (e) { toast(e.message); }
+    };
+  }
+  const sel = $('#aw'), cur = sel.value;
+  const opts = entries().map((x) => `<option value="${x.kind}:${esc(x.id)}">${esc(x.name)}</option>`).join('');
+  if (sel.dataset.sig !== opts) { sel.innerHTML = opts; sel.dataset.sig = opts; if (cur) sel.value = cur; }
+  $('#aglist').innerHTML = sc.map((x) => `<div class="row">${typeIcon('funnel')}<span class="col"><span class="t">${esc(x.target)}</span><span class="s">${whenFull(x.at)} · ${esc(x.numbers.map((n) => '+' + n).join(', '))}${x.n > 5 ? ' +' + (x.n - 5) : ''}${x.status === 'paused' ? ' · pausado' : ''}</span></span><button class="btn sec sm" data-x="${esc(x.id)}">Remover</button></div>`).join('') || '<div class="empty">Nada agendado.</div>';
+  $('#aglist').querySelectorAll('[data-x]').forEach((b) => (b.onclick = async () => { try { await command('schedule_cancel', { id: b.dataset.x }, 'Remover agendamento'); toast('Removendo…'); } catch (e) { toast(e.message); } }));
 }
 
 function rCamp() {
   const cs = (S && S.campaigns) || [];
   const lab = { draft: 'Rascunho', running: 'Rodando', paused: 'Pausada', done: 'Concluída', error: 'Erro', stopped: 'Parada' };
-  $('#v-camp').innerHTML = `<div class="card">${cs.slice().reverse().map((c) => `<div class="row" style="flex-wrap:wrap"><span class="ic">🚀</span><span class="col"><span class="t">${esc(c.name)}</span><span class="s">${lab[c.status] || c.status} · ${c.progress}/${c.total} · ✅ ${c.sent} ❌ ${c.failed}</span><div class="bar"><i style="width:${c.total ? Math.round(c.progress / c.total * 100) : 0}%"></i></div></span>
-    ${c.status === 'running' ? `<button class="btn sec sm" data-a="pause" data-c="${esc(c.id)}">⏸</button>` : c.status !== 'done' ? `<button class="btn sm" data-a="resume" data-c="${esc(c.id)}">▶</button>` : ''}</div>`).join('') || '<div class="empty">Nenhuma campanha. Crie no painel da extensão.</div>'}</div>`;
-  $('#v-camp').querySelectorAll('[data-a]').forEach((b) => b.addEventListener('click', async () => { try { await send('campaign', { id: b.dataset.c, action: b.dataset.a }, (b.dataset.a === 'pause' ? 'Pausar' : 'Retomar') + ' campanha'); toast('Enviado ✓'); } catch (e) { toast(e.message); } }));
+  $('#v-camp').innerHTML = `<div class="card">${cs.slice().reverse().map((c) => `<div class="row" style="align-items:flex-start">${typeIcon('funnel')}<span class="col"><span class="t">${esc(c.name)}</span><span class="s">${lab[c.status] || c.status} · ${c.progress}/${c.total} · ${c.sent} enviados · ${c.failed} falhas</span><div class="bar"><i style="width:${c.total ? Math.round((c.progress / c.total) * 100) : 0}%"></i></div></span>
+    ${c.status === 'running' ? `<button class="btn sec sm" data-a="pause" data-c="${esc(c.id)}">Pausar</button>` : c.status !== 'done' ? `<button class="btn sm" data-a="resume" data-c="${esc(c.id)}">Retomar</button>` : ''}</div>`).join('') || '<div class="empty">Nenhuma campanha. Crie no painel da extensão.</div>'}</div>`;
+  $('#v-camp').querySelectorAll('[data-a]').forEach((b) => (b.onclick = async () => { try { await command('campaign', { id: b.dataset.c, action: b.dataset.a }, (b.dataset.a === 'pause' ? 'Pausar' : 'Retomar') + ' campanha'); toast('Enviado ao Mac'); } catch (e) { toast(e.message); } }));
 }
 
-function rLog() {
-  const icon = { pending: '⏳', running: '⏳', done: '✅', error: '❌' };
-  const stTxt = { pending: 'esperando o Mac', running: 'executando', done: '', error: '' };
+function rMore() {
+  const icon = { pending: '⏳', running: '⏳', done: '✓', error: '✕' };
   const h = (S && S.history) || [];
-  $('#v-log').innerHTML = `<h2>Comandos do celular</h2><div class="card">${cmds.slice(0, 15).map((c) => `<div class="row"><span class="ic">${icon[c.status] || '•'}</span><span class="col"><span class="t">${esc(c.label)}</span><span class="s st-${c.status}">${fmtT(c.created_at)} · ${esc(c.result || stTxt[c.status] || c.status)}</span></span></div>`).join('') || '<div class="empty">Nada ainda.</div>'}</div>
-    <h2>Envios no WhatsApp</h2><div class="card">${h.map((x) => `<div class="row"><span class="ic">${x.ok ? '✅' : '❌'}</span><span class="col"><span class="t">${esc(x.what)} → ${esc(x.name || '+' + num(x.chatId))}</span><span class="s">${fmtT(x.t)} · ${esc(x.source || '')}${x.ok ? '' : ' · ' + esc(x.err || 'falha')}</span></span></div>`).join('') || '<div class="empty">Nenhum envio ainda.</div>'}</div>
-    <div style="height:10px"></div><button class="btn sec block" id="ping">Testar conexão com o Mac</button><div style="height:8px"></div><button class="btn sec block" id="out">Sair da conta</button>`;
-  $('#ping').addEventListener('click', async () => { try { await send('ping', {}, 'Teste de conexão'); toast('Enviado, veja acima'); } catch (e) { toast(e.message); } });
-  $('#out').addEventListener('click', logout);
+  $('#v-more').innerHTML = `<div class="grp">Seus pedidos do celular</div><div class="card">${cmds.slice(0, 15).map((c) => `<div class="row"><span class="st-${c.status}" style="width:20px;text-align:center;font-weight:700">${icon[c.status] || '•'}</span><span class="col"><span class="t">${esc(c.label)}</span><span class="s st-${c.status}">${hm(c.created_at)} · ${esc(c.result || (c.status === 'pending' ? 'esperando o Mac' : c.status === 'running' ? 'executando' : ''))}</span></span></div>`).join('') || '<div class="empty">Nada ainda.</div>'}</div>
+    <div class="grp">Envios no WhatsApp</div><div class="card">${h.slice(0, 25).map((x) => `<div class="row"><span class="${x.ok ? 'st-done' : 'st-error'}" style="width:20px;text-align:center;font-weight:700">${x.ok ? '✓' : '✕'}</span><span class="col"><span class="t">${esc(x.what)} → ${esc(x.name || fmtNum(x.chatId))}</span><span class="s">${whenFull(x.t)} · ${esc(x.source || '')}${x.ok ? '' : ' · ' + esc(x.err || 'falha')}</span></span></div>`).join('') || '<div class="empty">Nenhum envio ainda.</div>'}</div>
+    <div style="padding:4px 16px 8px;display:grid;gap:10px"><button class="btn sec block" id="ping">Testar conexão com o Mac</button><button class="btn red block" id="out">Sair da conta</button></div>`;
+  $('#ping').onclick = async () => { try { await command('ping', {}, 'Teste de conexão'); toast('Enviado — veja acima'); } catch (e) { toast(e.message); } };
+  $('#out').onclick = logout;
 }
+
+// ---------- conversa aberta
+async function watchChat(force) {
+  if (!chat) return;
+  if (!force && Date.now() - watchAt < 90000) return;
+  watchAt = Date.now();
+  try { await command('watch_chat', { chatId: chat.id }, null, true); } catch (e) {}
+}
+async function pollChat() {
+  if (!chat) return;
+  clearTimeout(chatT);
+  try {
+    const rows = await rest('zf_chats?chat_id=eq.' + encodeURIComponent(chat.id) + '&select=data,updated_at');
+    if (chat && rows && rows[0]) {
+      const d = rows[0].data || {};
+      if (d.at !== chat.at) { chat.msgs = d.msgs || []; chat.at = d.at; if (d.name && !chat.name) chat.name = d.name; chat.pend = chat.pend.filter((p) => !chat.msgs.some((m) => m.fromMe && m.text === p.text && m.t * 1000 >= p.t - 60000)); renderChat(true); }
+    }
+  } catch (e) {}
+  watchChat(false);
+  if (chat) chatT = setTimeout(pollChat, document.visibilityState === 'visible' ? 2500 : 15000);
+}
+function openChat(id, name) {
+  const c = ((S && S.chats) || []).find((x) => x.id === id);
+  chat = { id, name: name || (c && c.name) || '', msgs: null, at: null, pend: [] };
+  $('#chat').classList.add('open'); $('#chat').setAttribute('aria-hidden', 'false');
+  $('#txt').value = ''; $('#sendBtn').disabled = true;
+  renderChat(true);
+  watchAt = 0; watchChat(true);
+  pollChat();
+}
+function closeChat() { chat = null; clearTimeout(chatT); $('#chat').classList.remove('open'); $('#chat').setAttribute('aria-hidden', 'true'); $('#txt').blur(); }
+$('#back').onclick = closeChat;
+$('#cRmkt').onclick = () => chat && pickRule(chat.id, chat.name);
+
+function bubble(m) {
+  const meta = `<span class="meta">${hm((m.t || 0) * 1000)}${m.fromMe ? ' ' + ticks(m.ack) : ''}</span>`;
+  let body = '';
+  if (m.type === 'chat') body = esc(m.text);
+  else {
+    if (m.thumb) body += `<img src="${m.thumb}" alt="">`;
+    else body += `<span class="lab">${esc(m.label || 'Mensagem')}${m.file ? ' · ' + esc(m.file) : ''}</span>`;
+    if (m.text) body += (m.thumb ? '' : '\n') + esc(m.text);
+  }
+  return `<div class="b ${m.fromMe ? 'me' : 'th'}">${body}${meta}</div>`;
+}
+function renderChat(scroll) {
+  if (!chat) return;
+  const c = ((S && S.chats) || []).find((x) => x.id === chat.id);
+  const name = chat.name || (c && c.name) || fmtNum(chat.id) || 'Contato';
+  $('#cAv').outerHTML = avatar(name, chat.id).replace('class="av"', 'class="av" id="cAv"');
+  $('#cName').textContent = name;
+  const inQ = ((S && S.queue) || []).filter((e) => e.chatId === chat.id);
+  const run = ((S && S.running) || []).find((r) => r.chatId === chat.id);
+  $('#cSub').textContent = run ? 'enviando ' + run.label + ' (' + run.step + '/' + run.total + ')…' : inQ.length ? 'em remarketing: ' + inQ.map((e) => e.rule).join(', ') : fmtNum(chat.id);
+  const ban = $('#cBanner');
+  if (!macOnline()) { ban.textContent = 'Mac offline — mensagens novas aparecem quando ele voltar'; ban.classList.remove('hide'); } else ban.classList.add('hide');
+  const box = $('#msgs');
+  const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
+  if (chat.msgs === null) box.innerHTML = '<div class="empty">Carregando mensagens do Mac…</div>';
+  else {
+    let h = '', lastDay = '';
+    for (const m of chat.msgs) { const d = new Date((m.t || 0) * 1000).toDateString(); if (d !== lastDay) { lastDay = d; h += `<div class="day">${when((m.t || 0) * 1000).replace(/^\d\d:\d\d$/, 'Hoje')}</div>`; } h += bubble(m); }
+    h += chat.pend.map((p) => `<div class="b me pend">${esc(p.text)}<span class="meta">${hm(p.t)} <span class="tick">🕓</span></span></div>`).join('');
+    box.innerHTML = h || '<div class="empty">Nenhuma mensagem ainda. Mande um funil ou escreva abaixo.</div>';
+  }
+  if (scroll || nearBottom) box.scrollTop = box.scrollHeight;
+  const quick = $('#quick');
+  const sig = JSON.stringify(entries().map((x) => x.id + x.name));
+  if (quick.dataset.sig !== sig) {
+    quick.dataset.sig = sig;
+    quick.innerHTML = entries().map((x) => `<button class="chip${x.kind === 'funnel' ? ' f' : ''}" data-k="${x.kind}" data-id="${esc(x.id)}">${svg(TYPE[x.t][0])}${esc(x.name)}</button>`).join('');
+    quick.querySelectorAll('.chip').forEach((b) => (b.onclick = () => { const e = entries().find((x) => x.id === b.dataset.id && x.kind === b.dataset.k); if (e && chat) confirmSend(e, chat.id, chat.name); }));
+  }
+}
+const txt = $('#txt');
+txt.addEventListener('input', () => { txt.style.height = 'auto'; txt.style.height = Math.min(120, txt.scrollHeight) + 'px'; $('#sendBtn').disabled = !txt.value.trim(); });
+$('#sendBtn').onclick = async () => {
+  const text = txt.value.trim(); if (!text || !chat) return;
+  $('#sendBtn').disabled = true;
+  try {
+    await command('send_text', { chatId: chat.id, text }, '✍️ ' + text.slice(0, 30) + ' → ' + (chat.name || fmtNum(chat.id)), true);
+    chat.pend.push({ text, t: Date.now() }); txt.value = ''; txt.style.height = 'auto'; renderChat(true); setTimeout(pollChat, 2500);
+  } catch (e) { toast(e.message); $('#sendBtn').disabled = false; }
+};
 
 if (ls.get('zf_sess')) start(); else logout();
 }
