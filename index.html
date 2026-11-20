@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ZapFunil">
+<meta name="theme-color" content="#0b1f1b">
+<link rel="apple-touch-icon" href="icon-180.png">
+<link rel="manifest" href="manifest.webmanifest">
+<title>ZapFunil</title>
+<style>
+:root{--bg:#0b1f1b;--card:#12302a;--card2:#173b34;--ink:#eaf5f1;--mute:#93b3aa;--line:#22463f;--acc:#25d366;--yel:#ffd60a;--red:#ff6b5e;--safe-t:env(safe-area-inset-top);--safe-b:env(safe-area-inset-bottom)}
+@media (prefers-color-scheme:light){:root{--bg:#f2f6f4;--card:#fff;--card2:#eef4f1;--ink:#10241f;--mute:#5d746d;--line:#dbe6e1}}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent;min-width:0}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 -apple-system,BlinkMacSystemFont,"SF Pro Text",system-ui,sans-serif}
+body{padding:calc(var(--safe-t) + 8px) 14px calc(var(--safe-b) + 84px)}
+h1{font-size:22px;margin:0}h2{font-size:17px;margin:18px 0 8px}
+.top{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.top .logo{width:34px;height:34px;border-radius:10px;background:#128c7e;display:grid;place-items:center;color:var(--yel);font-size:20px;font-weight:800}
+.pill{font-size:12px;padding:4px 9px;border-radius:99px;background:var(--card2);color:var(--mute);white-space:nowrap}
+.pill.ok{background:rgba(37,211,102,.16);color:var(--acc)}.pill.bad{background:rgba(255,107,94,.16);color:var(--red)}
+.grow{flex:1}
+.btn{appearance:none;border:0;border-radius:12px;padding:12px 16px;font:600 16px/1 inherit;background:var(--acc);color:#05261b;min-height:44px;cursor:pointer}
+.btn.sec{background:var(--card2);color:var(--ink)}.btn.red{background:var(--red);color:#2b0703}.btn.sm{min-height:36px;padding:8px 12px;font-size:14px}
+.btn.block{width:100%}.btn:disabled{opacity:.5}
+.auto{border:0;border-radius:99px;padding:7px 12px;font:600 13px inherit;background:rgba(37,211,102,.16);color:var(--acc);min-height:34px}
+.auto.off{background:rgba(255,214,10,.18);color:var(--yel)}
+input,select{width:100%;font:16px inherit;padding:12px;border-radius:12px;border:1px solid var(--line);background:var(--card);color:var(--ink);min-height:46px}
+input:focus,select:focus{outline:2px solid var(--acc);border-color:transparent}
+label{display:block;font-size:13px;color:var(--mute);margin:12px 0 6px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:4px 0;margin-bottom:12px;overflow:hidden}
+.row{display:flex;align-items:center;gap:12px;padding:11px 14px;border-top:1px solid var(--line);width:100%;background:none;border-left:0;border-right:0;border-bottom:0;color:inherit;font:inherit;text-align:left}
+.card .row:first-child{border-top:0}
+button.row:active{background:var(--card2)}
+.ic{width:36px;height:36px;border-radius:10px;background:var(--card2);display:grid;place-items:center;flex:none;font-size:17px}
+.t{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.s{font-size:13px;color:var(--mute);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.col{display:flex;flex-direction:column;flex:1;min-width:0}
+.badge{background:var(--acc);color:#05261b;border-radius:99px;font-size:12px;font-weight:700;padding:1px 7px}
+.grp{font-size:12px;color:var(--mute);font-weight:700;text-transform:uppercase;letter-spacing:.04em;padding:12px 14px 4px}
+.chip{display:flex;align-items:center;gap:10px;background:var(--card2);border-radius:14px;padding:10px 12px;margin-bottom:10px}
+.empty{color:var(--mute);text-align:center;padding:22px 10px;font-size:14px}
+.bar{height:7px;border-radius:9px;background:var(--card2);overflow:hidden;margin-top:6px}.bar>i{display:block;height:100%;background:var(--acc)}
+nav{position:fixed;left:0;right:0;bottom:0;display:grid;grid-template-columns:repeat(5,1fr);background:var(--card);border-top:1px solid var(--line);padding:6px 4px calc(var(--safe-b) + 6px);z-index:5}
+nav button{background:none;border:0;color:var(--mute);font:600 11px inherit;display:flex;flex-direction:column;align-items:center;gap:2px;padding:6px 0;min-height:48px}
+nav button b{font-size:20px;font-weight:400}nav button.on{color:var(--acc)}
+.sheet{position:fixed;inset:0;background:rgba(0,0,0,.5);display:flex;align-items:flex-end;z-index:10}
+.sheet>div{background:var(--card);width:100%;border-radius:20px 20px 0 0;padding:18px 16px calc(var(--safe-b) + 16px);max-height:85vh;overflow:auto}
+.sheet h3{margin:0 0 6px;font-size:18px}
+.toast{position:fixed;left:50%;top:calc(var(--safe-t) + 10px);transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:12px;font-size:14px;z-index:20;max-width:90vw;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.show{opacity:1}
+.st-pending{color:var(--yel)}.st-running{color:var(--yel)}.st-done{color:var(--acc)}.st-error{color:var(--red)}
+.hide{display:none!important}
+.login{max-width:420px;margin:40px auto}
+.seg{display:flex;gap:6px;margin-bottom:10px;overflow-x:auto}.seg button{flex:none;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:99px;padding:7px 12px;font:14px inherit}
+.seg button.on{background:var(--acc);color:#05261b;border-color:var(--acc)}
+@media (prefers-reduced-motion:reduce){.toast{transition:none}}
+</style>
+</head>
+<body>
+<div id="login" class="login hide">
+  <div class="top"><div class="logo">⚡</div><h1>ZapFunil</h1></div>
+  <p class="s" style="white-space:normal">Entre com a mesma conta que você conectou na extensão do Chrome (aba 📱 Celular do painel).</p>
+  <form id="loginForm">
+    <label for="em">E-mail</label><input id="em" type="email" autocomplete="username" required>
+    <label for="pw">Senha</label><input id="pw" type="password" autocomplete="current-password" required>
+    <div style="height:14px"></div>
+    <button class="btn block" id="loginBtn">Entrar</button>
+  </form>
+  <p class="s" id="loginErr" style="color:var(--red);white-space:normal"></p>
+</div>
+
+<div id="app" class="hide">
+  <div class="top">
+    <div class="logo">⚡</div>
+    <div class="col"><h1 id="title">Enviar</h1><span class="s" id="macSt">conectando…</span></div>
+    <button class="auto" id="autoBtn">Auto</button>
+  </div>
+  <section id="v-send"></section>
+  <section id="v-rmkt" class="hide"></section>
+  <section id="v-agenda" class="hide"></section>
+  <section id="v-camp" class="hide"></section>
+  <section id="v-log" class="hide"></section>
+</div>
+
+<nav id="nav" class="hide">
+  <button data-v="send" class="on"><b>⚡</b>Enviar</button>
+  <button data-v="rmkt"><b>🔔</b>Rmkt</button>
+  <button data-v="agenda"><b>⏰</b>Agenda</button>
+  <button data-v="camp"><b>🚀</b>Campanhas</button>
+  <button data-v="log"><b>📜</b>Atividade</button>
+</nav>
+<div id="sheet" class="sheet hide"><div id="sheetBox"></div></div>
+<div id="toast" class="toast"></div>
+
+<script>
+{
+const CONFIG = { url: 'https://kjntxjencxxauhzulera.supabase.co', key: 'sb_publishable_UsD2jKHI97zFRkSHkM87iA_G0KKfrWq' };
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const ICON = { text: '💬', audio: '🎤', image: '🖼️', video: '🎬', document: '📄', funnel: '🔁' };
+const TYPE_ORDER = [['funnel', 'Funis'], ['text', 'Mensagens'], ['audio', 'Áudios'], ['image', 'Mídias'], ['document', 'Documentos']];
+let S = null, cmds = [], view = 'send', contact = null, q = '', stateAt = null, pollT = null;
+
+// ---------- armazenamento local seguro
+const ls = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }, del(k) { try { localStorage.removeItem(k); } catch (e) {} } };
+
+function toast(m) { const t = $('#toast'); t.textContent = m; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 2600); }
+
+// ---------- Supabase (REST)
+async function authReq(path, body) {
+  const r = await fetch(CONFIG.url + '/auth/v1/' + path, { method: 'POST', headers: { apikey: CONFIG.key, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.msg || j.error_description || j.message || 'Erro ' + r.status);
+  return j;
+}
+function saveSession(j) { ls.set('zf_sess', { at: j.access_token, rt: j.refresh_token, exp: Date.now() + (j.expires_in || 3600) * 1000, email: j.user && j.user.email }); }
+let refreshing = null;
+async function token() {
+  const s = ls.get('zf_sess');
+  if (!s) throw new Error('login');
+  if (Date.now() < s.exp - 60000) return s.at;
+  if (!refreshing) refreshing = authReq('token?grant_type=refresh_token', { refresh_token: s.rt }).then((j) => { saveSession(j); return j.access_token; }).finally(() => setTimeout(() => (refreshing = null), 0));
+  return refreshing;
+}
+async function rest(path, opts) {
+  opts = opts || {};
+  let t;
+  try { t = await token(); } catch (e) { logout(); throw e; }
+  const r = await fetch(CONFIG.url + '/rest/v1/' + path, { method: opts.method || 'GET', headers: Object.assign({ apikey: CONFIG.key, Authorization: 'Bearer ' + t, 'Content-Type': 'application/json' }, opts.headers || {}), body: opts.body ? JSON.stringify(opts.body) : undefined });
+  if (r.status === 401) { logout(); throw new Error('Sessão expirou, entre de novo'); }
+  if (!r.ok) throw new Error('Erro ' + r.status + ' ' + (await r.text()).slice(0, 120));
+  const txt = await r.text();
+  return txt ? JSON.parse(txt) : null;
+}
+async function send(kind, payload, label) {
+  if (!macOnline()) toast('⚠️ O Mac parece offline. O comando espera até 15 min.');
+  const rows = await rest('zf_commands', { method: 'POST', headers: { Prefer: 'return=representation' }, body: { kind, payload } });
+  const row = rows && rows[0];
+  if (row) { row.label = label; cmds.unshift(row); const lab = ls.get('zf_labels') || {}; lab[row.id] = label; ls.set('zf_labels', lab); }
+  render();
+  fastPoll();
+  return row;
+}
+
+// ---------- ciclo
+function macOnline() { return !!(stateAt && Date.now() - stateAt < 75000 && S && S.waReady); }
+async function refresh() {
+  try {
+    const st = await rest('zf_state?select=data,updated_at');
+    if (st && st[0]) { S = st[0].data || {}; stateAt = new Date(st[0].updated_at).getTime(); }
+    const c = await rest('zf_commands?select=id,kind,payload,status,result,created_at,done_at&order=id.desc&limit=25');
+    const lab = ls.get('zf_labels') || {};
+    cmds = (c || []).map((x) => Object.assign(x, { label: lab[x.id] || x.kind }));
+    render();
+  } catch (e) { if (e.message !== 'login') $('#macSt').textContent = 'sem conexão: ' + e.message.slice(0, 40); }
+}
+function schedule(ms) { clearTimeout(pollT); pollT = setTimeout(async () => { if (document.visibilityState === 'visible') await refresh(); schedule(cmds.some((c) => c.status === 'pending' || c.status === 'running') ? 2500 : 6000); }, ms); }
+function fastPoll() { schedule(1500); }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { refresh(); fastPoll(); } });
+
+// ---------- login
+function logout() { ls.del('zf_sess'); $('#app').classList.add('hide'); $('#nav').classList.add('hide'); $('#login').classList.remove('hide'); }
+$('#loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  $('#loginBtn').disabled = true; $('#loginErr').textContent = '';
+  try { const j = await authReq('token?grant_type=password', { email: $('#em').value.trim(), password: $('#pw').value }); saveSession(j); start(); }
+  catch (err) { $('#loginErr').textContent = /confirm/i.test(err.message) ? 'Confirme seu e-mail primeiro (link que o Supabase mandou).' : /invalid/i.test(err.message) ? 'E-mail ou senha incorretos.' : err.message; }
+  finally { $('#loginBtn').disabled = false; }
+});
+function start() { $('#login').classList.add('hide'); $('#app').classList.remove('hide'); $('#nav').classList.remove('hide'); render(); refresh(); fastPoll(); }
+
+// ---------- navegação
+document.querySelectorAll('#nav button').forEach((b) => b.addEventListener('click', () => { view = b.dataset.v; document.querySelectorAll('#nav button').forEach((x) => x.classList.toggle('on', x === b)); render(); window.scrollTo(0, 0); }));
+$('#autoBtn').addEventListener('click', async () => {
+  if (!S) return;
+  const paused = !S.paused;
+  try { await send('automations', { paused }, paused ? 'Pausar automações' : 'Ligar automações'); S.paused = paused; render(); } catch (e) { toast(e.message); }
+});
+
+// ---------- sheet (confirmação)
+function sheet(html, bind) { $('#sheetBox').innerHTML = html; $('#sheet').classList.remove('hide'); bind && bind($('#sheetBox')); }
+function closeSheet() { $('#sheet').classList.add('hide'); }
+$('#sheet').addEventListener('click', (e) => { if (e.target.id === 'sheet') closeSheet(); });
+
+const fmtT = (ts) => { if (!ts) return '-'; const d = new Date(ts); const today = new Date().toDateString() === d.toDateString(); return today ? d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); };
+const num = (id) => String(id || '').replace(/@.*/, '');
+const normNum = (raw) => { const s = String(raw || '').trim(); let d = s.replace(/\D/g, ''); if (!d) return ''; if (s.startsWith('+')) return d; if (d.startsWith('00')) return d.slice(2); if ((d.length === 10 || d.length === 11) && !d.startsWith('55')) d = '55' + d; return d; };
+
+// ---------- telas
+function render() {
+  const on = macOnline();
+  $('#macSt').innerHTML = !S ? 'aguardando o Mac…' : on ? '<span class="pill ok">● Mac online</span>' : '<span class="pill bad">● Mac offline' + (stateAt ? ' desde ' + fmtT(stateAt) : '') + '</span>';
+  const ab = $('#autoBtn'); ab.textContent = S && S.paused ? '⏸ Auto OFF' : '▶ Auto ON'; ab.classList.toggle('off', !!(S && S.paused));
+  ['send', 'rmkt', 'agenda', 'camp', 'log'].forEach((v) => $('#v-' + v).classList.toggle('hide', v !== view));
+  $('#title').textContent = { send: 'Enviar', rmkt: 'Remarketing', agenda: 'Agenda', camp: 'Campanhas', log: 'Atividade' }[view];
+  ({ send: rSend, rmkt: rRmkt, agenda: rAgenda, camp: rCamp, log: rLog })[view]();
+}
+
+function contactPicker(target, onPick) {
+  const chats = (S && S.chats) || [];
+  const f = q.toLowerCase();
+  const list = chats.filter((c) => !f || (c.name || '').toLowerCase().includes(f) || num(c.id).includes(f.replace(/\D/g, '') || '§')).slice(0, 40);
+  const typed = normNum(q);
+  target.innerHTML = `<input id="cq" placeholder="Buscar conversa ou digitar número" value="${esc(q)}" inputmode="search" autocomplete="off">
+    <div class="card" style="margin-top:10px">${typed.length >= 10 && !/[a-z]/i.test(q) ? `<button class="row" data-num="${typed}"><span class="ic">📞</span><span class="col"><span class="t">+${typed}</span><span class="s">Usar este número</span></span></button>` : ''}
+    ${list.map((c) => `<button class="row" data-id="${esc(c.id)}" data-name="${esc(c.name)}"><span class="ic">👤</span><span class="col"><span class="t">${esc(c.name || '+' + num(c.id))}</span><span class="s">${esc(num(c.id).length > 13 ? 'contato' : '+' + num(c.id))} · ${fmtT((c.t || 0) * 1000)}</span></span>${c.unread ? `<span class="badge">${c.unread}</span>` : ''}</button>`).join('') || '<div class="empty">Nenhuma conversa encontrada.</div>'}</div>`;
+  const inp = target.querySelector('#cq');
+  inp.addEventListener('input', () => { q = inp.value; const pos = inp.selectionStart; contactPicker(target, onPick); const n = target.querySelector('#cq'); n.focus(); n.setSelectionRange(pos, pos); });
+  target.querySelectorAll('[data-id]').forEach((b) => b.addEventListener('click', () => onPick({ target: b.dataset.id, name: b.dataset.name })));
+  target.querySelectorAll('[data-num]').forEach((b) => b.addEventListener('click', () => onPick({ target: b.dataset.num, name: '' })));
+}
+
+function itemsList(onPick) {
+  if (!S) return '<div class="empty">Esperando o Mac mandar seus funis…</div>';
+  const all = [...(S.funnels || []).map((f) => ({ k: 'funnel', id: f.id, name: f.name, sub: f.steps + ' etapa(s)', t: 'funnel' })),
+    ...(S.items || []).map((i) => ({ k: 'item', id: i.id, name: i.name, sub: i.type === 'audio' ? 'Áudio ' + Math.round(i.duration || 0) + 's' : i.text || '', t: i.type === 'video' ? 'image' : i.type }))];
+  return TYPE_ORDER.map(([t, label]) => { const g = all.filter((x) => x.t === t); if (!g.length) return ''; return `<div class="grp">${label}</div>` + g.map((x) => `<button class="row" data-k="${x.k}" data-id="${esc(x.id)}" data-name="${esc(x.name)}"><span class="ic">${ICON[t]}</span><span class="col"><span class="t">${esc(x.name)}</span><span class="s">${esc(x.sub)}</span></span></button>`).join(''); }).join('') || '<div class="empty">Nenhum item. Crie no painel da extensão.</div>';
+}
+
+function rSend() {
+  const el = $('#v-send');
+  if (!contact) {
+    el.innerHTML = '<h2>1. Para quem?</h2><div id="pick"></div>';
+    contactPicker(el.querySelector('#pick'), (c) => { contact = c; q = ''; render(); });
+    return;
+  }
+  const running = ((S && S.running) || []).filter((r) => r.chatId === contact.target);
+  el.innerHTML = `<div class="chip"><span class="ic">👤</span><span class="col"><span class="t">${esc(contact.name || '+' + num(contact.target))}</span><span class="s">${esc(num(contact.target).length > 13 ? '' : '+' + num(contact.target))}</span></span><button class="btn sec sm" id="chg">Trocar</button></div>
+    ${running.map((r) => `<div class="s" style="margin:-4px 0 8px">▶ ${esc(r.label)} (${r.step}/${r.total})${r.queued ? ' · +' + r.queued + ' na fila' : ''}</div>`).join('')}
+    <h2>2. O que enviar?</h2><div class="card">${itemsList()}</div>
+    <button class="btn sec block" id="toRmkt">🔔 Colocar em remarketing</button>`;
+  el.querySelector('#chg').addEventListener('click', () => { contact = null; render(); });
+  el.querySelectorAll('[data-k]').forEach((b) => b.addEventListener('click', () => {
+    const who = contact.name || '+' + num(contact.target);
+    sheet(`<h3>Enviar agora?</h3><p class="s" style="white-space:normal">${ICON[b.dataset.k === 'funnel' ? 'funnel' : 'text']} <b>${esc(b.dataset.name)}</b> → ${esc(who)}</p><button class="btn block" id="ok">Enviar</button><div style="height:8px"></div><button class="btn sec block" id="no">Cancelar</button>`, (box) => {
+      box.querySelector('#no').onclick = closeSheet;
+      box.querySelector('#ok').onclick = async () => { closeSheet(); try { await send('send', { target: contact.target, name: contact.name, targetType: b.dataset.k, targetId: b.dataset.id }, b.dataset.name + ' → ' + who); toast('Enviado para o Mac ✓'); } catch (e) { toast(e.message); } };
+    });
+  }));
+  el.querySelector('#toRmkt').addEventListener('click', () => pickRule(contact));
+}
+
+function pickRule(c) {
+  const rules = (S && S.rules) || [];
+  sheet(`<h3>Qual remarketing?</h3><div class="card">${rules.map((r) => `<button class="row" data-r="${esc(r.id)}"><span class="ic">🔔</span><span class="col"><span class="t">${esc(r.name)}${r.enabled ? '' : ' (pausada)'}</span><span class="s">${r.stages} etapa(s) · ${r.mode === 'inactive' ? 'conversa parada' : 'se não responder'}</span></span></button>`).join('') || '<div class="empty">Nenhuma regra criada.</div>'}</div><button class="btn sec block" id="no">Fechar</button>`, (box) => {
+    box.querySelector('#no').onclick = closeSheet;
+    box.querySelectorAll('[data-r]').forEach((b) => (b.onclick = async () => { closeSheet(); try { await send('rmkt_enqueue', { target: c.target, name: c.name, ruleId: b.dataset.r }, 'Remarketing → ' + (c.name || num(c.target))); toast('Pedido enviado ✓'); } catch (e) { toast(e.message); } }));
+  });
+}
+
+function rRmkt() {
+  const qd = (S && S.queue) || [];
+  $('#v-rmkt').innerHTML = `<p class="s" style="white-space:normal">Contatos aguardando o próximo follow-up. Se o lead responder, sai sozinho.</p>
+    <div class="card">${qd.map((e) => `<div class="row"><span class="ic">🔔</span><span class="col"><span class="t">${esc(e.name || '+' + num(e.chatId))}</span><span class="s">${esc(e.rule)} · etapa ${e.stage}/${e.total} · ${e.dueAt ? 'envia ' + fmtT(e.dueAt) : 'esperando você responder'}</span></span><button class="btn red sm" data-x="${esc(e.id)}">Parar</button></div>`).join('') || '<div class="empty">Ninguém em remarketing agora.</div>'}</div>`;
+  $('#v-rmkt').querySelectorAll('[data-x]').forEach((b) => b.addEventListener('click', async () => { b.disabled = true; try { await send('rmkt_cancel', { entryId: b.dataset.x }, 'Parar remarketing'); toast('Parando…'); } catch (e) { toast(e.message); b.disabled = false; } }));
+}
+
+function rAgenda() {
+  const sc = (S && S.schedules) || [];
+  const opts = !S ? '' : [...(S.funnels || []).map((f) => `<option value="funnel:${esc(f.id)}">🔁 ${esc(f.name)}</option>`), ...(S.items || []).map((i) => `<option value="item:${esc(i.id)}">${ICON[i.type] || ''} ${esc(i.name)}</option>`)].join('');
+  const d = new Date(Date.now() + 3600000); const p = (n) => String(n).padStart(2, '0');
+  const def = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours()) + ':' + p(d.getMinutes());
+  $('#v-agenda').innerHTML = `<div class="card" style="padding:4px 14px 14px"><label for="an">Número (com DDD)</label><input id="an" inputmode="tel" placeholder="11 99999-8888" value="${esc(contact && /^\d+$/.test(num(contact.target)) && num(contact.target).length <= 13 ? num(contact.target) : '')}">
+    <label for="aw">Enviar</label><select id="aw">${opts}</select>
+    <label for="at">Quando</label><input id="at" type="datetime-local" value="${def}">
+    <div style="height:12px"></div><button class="btn block" id="ag">Agendar</button></div>
+    <h2>Agendados</h2><div class="card">${sc.map((x) => `<div class="row"><span class="ic">⏰</span><span class="col"><span class="t">${esc(x.target)}</span><span class="s">${fmtT(x.at)} · ${esc(x.numbers.map((n) => '+' + n).join(', '))}${x.n > 5 ? ' +' + (x.n - 5) : ''}${x.status === 'paused' ? ' · pausado' : ''}</span></span><button class="btn sec sm" data-x="${esc(x.id)}">✕</button></div>`).join('') || '<div class="empty">Nada agendado.</div>'}</div>`;
+  $('#ag').addEventListener('click', async () => {
+    const n = normNum($('#an').value); if (n.length < 10) return toast('Número inválido');
+    const [tt, ...rest2] = $('#aw').value.split(':'); const at = new Date($('#at').value);
+    if (!+at || at < Date.now() - 60000) return toast('Escolha um horário no futuro');
+    try { await send('schedule', { numbers: [n], targetType: tt, targetId: rest2.join(':'), at: at.toISOString() }, 'Agendar ' + $('#aw').selectedOptions[0].text.trim() + ' → +' + n); toast('Agendando…'); } catch (e) { toast(e.message); }
+  });
+  $('#v-agenda').querySelectorAll('[data-x]').forEach((b) => b.addEventListener('click', async () => { try { await send('schedule_cancel', { id: b.dataset.x }, 'Remover agendamento'); toast('Removendo…'); } catch (e) { toast(e.message); } }));
+}
+
+function rCamp() {
+  const cs = (S && S.campaigns) || [];
+  const lab = { draft: 'Rascunho', running: 'Rodando', paused: 'Pausada', done: 'Concluída', error: 'Erro', stopped: 'Parada' };
+  $('#v-camp').innerHTML = `<div class="card">${cs.slice().reverse().map((c) => `<div class="row" style="flex-wrap:wrap"><span class="ic">🚀</span><span class="col"><span class="t">${esc(c.name)}</span><span class="s">${lab[c.status] || c.status} · ${c.progress}/${c.total} · ✅ ${c.sent} ❌ ${c.failed}</span><div class="bar"><i style="width:${c.total ? Math.round(c.progress / c.total * 100) : 0}%"></i></div></span>
+    ${c.status === 'running' ? `<button class="btn sec sm" data-a="pause" data-c="${esc(c.id)}">⏸</button>` : c.status !== 'done' ? `<button class="btn sm" data-a="resume" data-c="${esc(c.id)}">▶</button>` : ''}</div>`).join('') || '<div class="empty">Nenhuma campanha. Crie no painel da extensão.</div>'}</div>`;
+  $('#v-camp').querySelectorAll('[data-a]').forEach((b) => b.addEventListener('click', async () => { try { await send('campaign', { id: b.dataset.c, action: b.dataset.a }, (b.dataset.a === 'pause' ? 'Pausar' : 'Retomar') + ' campanha'); toast('Enviado ✓'); } catch (e) { toast(e.message); } }));
+}
+
+function rLog() {
+  const icon = { pending: '⏳', running: '⏳', done: '✅', error: '❌' };
+  const stTxt = { pending: 'esperando o Mac', running: 'executando', done: '', error: '' };
+  const h = (S && S.history) || [];
+  $('#v-log').innerHTML = `<h2>Comandos do celular</h2><div class="card">${cmds.slice(0, 15).map((c) => `<div class="row"><span class="ic">${icon[c.status] || '•'}</span><span class="col"><span class="t">${esc(c.label)}</span><span class="s st-${c.status}">${fmtT(c.created_at)} · ${esc(c.result || stTxt[c.status] || c.status)}</span></span></div>`).join('') || '<div class="empty">Nada ainda.</div>'}</div>
+    <h2>Envios no WhatsApp</h2><div class="card">${h.map((x) => `<div class="row"><span class="ic">${x.ok ? '✅' : '❌'}</span><span class="col"><span class="t">${esc(x.what)} → ${esc(x.name || '+' + num(x.chatId))}</span><span class="s">${fmtT(x.t)} · ${esc(x.source || '')}${x.ok ? '' : ' · ' + esc(x.err || 'falha')}</span></span></div>`).join('') || '<div class="empty">Nenhum envio ainda.</div>'}</div>
+    <div style="height:10px"></div><button class="btn sec block" id="ping">Testar conexão com o Mac</button><div style="height:8px"></div><button class="btn sec block" id="out">Sair da conta</button>`;
+  $('#ping').addEventListener('click', async () => { try { await send('ping', {}, 'Teste de conexão'); toast('Enviado, veja acima'); } catch (e) { toast(e.message); } });
+  $('#out').addEventListener('click', logout);
+}
+
+if (ls.get('zf_sess')) start(); else logout();
+}
+</script>
+</body>
+</html>
