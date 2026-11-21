@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <title>ZapFunil – Painel de controle</title>
+  <link rel="icon" href="icons/icon32.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500&display=swap">
+  <link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <aside class="side">
+    <div class="brand">ZapFunil</div>
+    <nav id="nav">
+      <a data-view="items" data-filter="text">💬 Mensagens</a>
+      <a data-view="items" data-filter="audio">🎤 Áudios</a>
+      <a data-view="items" data-filter="media">🖼️ Mídias</a>
+      <a data-view="items" data-filter="document">📄 Documentos</a>
+      <a data-view="funnels">🔁 Funis</a>
+      <a data-view="remarketing">🔔 Remarketing</a>
+      <a data-view="triggers">🎯 Gatilhos</a>
+      <a data-view="schedules">⏰ Agendamentos</a>
+      <a data-view="campaigns">🚀 Disparo em massa</a>
+      <a data-view="mobile">📱 Celular</a>
+      <a data-view="history">📜 Histórico</a>
+      <a data-view="settings">⚙️ Configurações</a>
+    </nav>
+    <button class="btn wa" id="openWa">Abrir WhatsApp Web</button>
+    <div class="side-note">100% local e gratuito. Seus dados ficam só neste navegador.</div>
+  </aside>
+  <main id="main"></main>
+  <div id="modal" class="modal hidden"><div class="modal-box" id="modalBox"></div></div>
+  <div id="toast" class="toast"></div>
+  <script src="lib/lame.min.js"></script>
+  <script src="lib/qrcode.js"></script>
+  <script src="common.js"></script>
+  <script src="dashboard.js"></script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+{
+ "version": "1.7.0-d5ada306",
+ "files": [
+  "background.js",
+  "common.js",
+  "config.js",
+  "content.css",
+  "content.js",
+  "dashboard.css",
+  "dashboard.html",
+  "dashboard.js",
+  "host.js",
+  "icons/icon128.png",
+  "icons/icon16.png",
+  "icons/icon32.png",
+  "icons/icon48.png",
+  "lib/LAMEJS-LICENSE",
+  "lib/WA-JS-LICENSE",
+  "lib/lame.min.js",
+  "lib/qrcode.js",
+  "lib/wppconnect-wa.js",
+  "manifest.json",
+  "page.js",
+  "remote.js"
+ ]
+}

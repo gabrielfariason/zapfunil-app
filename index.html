@@ -208,6 +208,8 @@ label.l{display:block;font-size:13px;color:var(--mute);margin:14px 0 6px}
     <section class="screen hide" id="v-more">
       <div class="top"><h1>Ajustes</h1><button class="auto js-auto">Auto</button></div>
       <div class="sub"><span class="pill js-mac"></span></div>
+      <div class="grp">Aparelhos</div>
+      <div class="card" id="hostCard"><div class="empty">Carregando…</div></div>
       <div class="grp">Notificações</div>
       <div class="card" id="pushCard"></div>
       <div class="grp">Seus pedidos do celular</div><div class="card" id="cmdList"></div>
@@ -253,7 +255,7 @@ label.l{display:block;font-size:13px;color:var(--mute);margin:14px 0 6px}
 <script src="lame.min.js"></script>
 <script>
 {
-const APP_VERSION = '2.0.1';
+const APP_VERSION = '2.1.0';
 const SB_URL = 'https://kjntxjencxxauhzulera.supabase.co';
 const SB_KEY = 'sb_publishable_UsD2jKHI97zFRkSHkM87iA_G0KKfrWq';
 const $ = (s, r) => (r || document).querySelector(s);
@@ -323,6 +325,7 @@ function subscribeLive() {
   if (live) sb.removeChannel(live);
   live = sb.channel('zf-live')
     .on('postgres_changes', { event: '*', schema: 'public', table: 'zf_state' }, (p) => p.new && p.new.data && applyState(p.new))
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'zf_hosts' }, () => { if (view === 'more') loadHosts(); })
     .on('postgres_changes', { event: '*', schema: 'public', table: 'zf_commands' }, (p) => {
       const n = p.new; if (!n || !n.id || HIDE_KINDS.includes(n.kind)) return;
       const i = cmds.findIndex((c) => c.id === n.id);
@@ -433,7 +436,7 @@ document.addEventListener('click', async (e) => {
 
 function renderHeader() {
   const on = macOnline();
-  $$('.js-mac').forEach((st) => { st.className = 'pill js-mac ' + (!S ? '' : on ? 'ok' : 'bad'); st.innerHTML = '<i></i>' + (!S ? 'esperando o Mac…' : on ? 'Mac online' : 'Mac offline' + (stateAt ? ' · ' + whenFull(stateAt) : '')); });
+  $$('.js-mac').forEach((st) => { st.className = 'pill js-mac ' + (!S ? '' : on ? 'ok' : 'bad'); const who = S && S.host && S.host.kind === 'server' ? 'Servidor 24h' : 'Mac'; st.innerHTML = '<i></i>' + (!S ? 'esperando o Mac…' : on ? who + ' online' : 'ZapFunil offline' + (stateAt ? ' · ' + whenFull(stateAt) : '')); });
   $$('.js-auto').forEach((ab) => { ab.textContent = S && S.paused ? 'Auto OFF' : 'Auto ON'; ab.classList.toggle('off', !!(S && S.paused)); });
   const u = (S && S.unread) || 0;
   const tu = $('#tabUnread'); tu.textContent = u > 99 ? '99+' : u; tu.classList.toggle('hide', !u);
@@ -518,8 +521,66 @@ function renderCamp() {
     ${c.status === 'running' ? `<button class="btn sec sm" data-a="pause" data-c="${esc(c.id)}">Pausar</button>` : c.status !== 'done' ? `<button class="btn sm" data-a="resume" data-c="${esc(c.id)}">Retomar</button>` : ''}</div>`).join('') || '<div class="empty">Nenhuma campanha. Crie no painel da extensão.</div>'}</div>`;
   $$('#campBody [data-a]').forEach((b) => (b.onclick = async () => { try { await command('campaign', { id: b.dataset.c, action: b.dataset.a }, (b.dataset.a === 'pause' ? 'Pausar' : 'Retomar') + ' campanha'); toast('Enviado ao Mac'); } catch (e) { toast(e.message); } }));
 }
+// ---------- aparelhos (Mac + servidor 24h)
+let hosts = [], lease = null, hostsAt = 0;
+async function loadHosts() {
+  const [h, l] = await Promise.all([
+    sb.from('zf_hosts').select('host_id, kind, name, info, request, last_seen').order('kind'),
+    sb.from('zf_lease').select('holder, expires_at').maybeSingle()
+  ]);
+  hosts = h.data || []; lease = l.data || null; hostsAt = Date.now();
+  renderHosts();
+}
+function hostOnline(h) { return Date.now() - new Date(h.last_seen).getTime() < 45000; }
+function renderHosts() {
+  const card = $('#hostCard'); if (!card) return;
+  if (!hosts.length) { card.innerHTML = '<div class="empty">Nenhum aparelho ainda.</div>'; return; }
+  const boss = lease && lease.holder && new Date(lease.expires_at) > Date.now() ? lease.holder : null;
+  card.innerHTML = hosts.map((h) => {
+    const on = hostOnline(h), i = h.info || {};
+    const wa = !on ? 'sem sinal desde ' + whenFull(new Date(h.last_seen).getTime()) : i.waReady ? 'WhatsApp conectado' : i.state === 'closed' ? 'WhatsApp Web fechado' : 'WhatsApp desconectado';
+    const tag = on && boss === h.host_id ? ' · <b style="color:var(--acc-t)">no comando</b>' : '';
+    const btn = h.kind === 'server' && on && !i.waReady && i.state !== 'closed' ? `<button class="btn sm" data-link="${esc(h.host_id)}">Conectar</button>` : '';
+    return `<div class="row"><span class="ic">${svg(h.kind === 'server' ? 'rocket' : 'chat')}</span><span class="col"><span class="t">${esc(h.name || (h.kind === 'server' ? 'Servidor 24h' : 'Mac'))}</span><span class="s" style="white-space:normal"><span class="${on ? (i.waReady ? 'st-done' : 'st-pending') : 'st-error'}">●</span> ${wa}${tag}</span></span>${btn}</div>`;
+  }).join('') + '<p class="note" style="padding:8px 14px 12px">Com o Mac ligado, ele envia. Se o Mac fechar, o servidor 24h assume sozinho e devolve quando o Mac voltar.</p>';
+  $$('#hostCard [data-link]').forEach((b) => (b.onclick = () => linkSheet(b.dataset.link)));
+}
+function linkSheet(hostId) {
+  const saved = localStorage.getItem('zf_myphone') || '';
+  sheet(`<h3>Conectar WhatsApp</h3><p>O servidor vai gerar um código de 8 letras para você digitar no seu WhatsApp.</p>
+    <label class="l" for="lp">Seu número do WhatsApp (com DDD)</label><input class="field" id="lp" inputmode="tel" placeholder="11 99999-8888" value="${esc(saved)}">
+    <div id="lout"></div><div style="height:14px"></div>
+    <div style="display:flex;gap:10px"><button class="btn sec block" id="no">Fechar</button><button class="btn block" id="ok">Gerar código</button></div>`, (box) => {
+    $('#no', box).onclick = closeSheet;
+    $('#ok', box).onclick = async () => {
+      const n = normNum($('#lp', box).value); if (n.length < 12) return toast('Número inválido');
+      localStorage.setItem('zf_myphone', $('#lp', box).value);
+      const id = 'r' + Date.now();
+      $('#ok', box).disabled = true; $('#lout', box).innerHTML = '<p style="margin:14px 0 0">Gerando código no servidor…</p>';
+      const { error } = await sb.from('zf_hosts').update({ request: { id, linkPhone: n } }).eq('host_id', hostId);
+      if (error) { $('#ok', box).disabled = false; return toast(error.message); }
+      const t0 = Date.now();
+      while (Date.now() - t0 < 60000 && !$('#sheet').classList.contains('hide')) {
+        await new Promise((r) => setTimeout(r, 2500));
+        const { data } = await sb.from('zf_hosts').select('info').eq('host_id', hostId).maybeSingle();
+        const i = (data && data.info) || {};
+        if (i.linkFor === id && (i.linkCode || i.linkErr)) {
+          $('#ok', box).disabled = false;
+          $('#lout', box).innerHTML = i.linkCode
+            ? `<div style="font:700 34px/1.2 ui-monospace,Menlo,monospace;letter-spacing:4px;text-align:center;color:var(--acc-t);margin:16px 0 8px">${esc(i.linkCode.slice(0, 4))}-${esc(i.linkCode.slice(4))}</div>
+               <p style="margin:0">No seu WhatsApp: <b>Configurações → Aparelhos conectados → Conectar um aparelho → Conectar com número de telefone</b> e digite o código acima.</p>`
+            : `<p style="color:var(--red);margin:14px 0 0">${esc(i.linkErr)}</p>`;
+          return;
+        }
+      }
+      $('#ok', box).disabled = false; $('#lout', box).innerHTML = '<p style="color:var(--red);margin:14px 0 0">O servidor não respondeu. Tente de novo em 1 minuto.</p>';
+    };
+  });
+}
+
 function renderMore() {
   if (view !== 'more') return;
+  if (Date.now() - hostsAt > 8000) loadHosts();
   const icon = { pending: '⏳', running: '⏳', done: '✓', error: '✕' };
   $('#cmdList').innerHTML = cmds.slice(0, 15).map((c) => `<div class="row"><span class="st-${c.status}" style="width:20px;text-align:center;font-weight:700">${icon[c.status] || '•'}</span><span class="col"><span class="t">${esc(c.label)}</span><span class="s st-${c.status}">${hm(c.created_at)} · ${esc(c.result || (c.status === 'pending' ? 'esperando o Mac' : c.status === 'running' ? 'executando' : ''))}</span></span></div>`).join('') || '<div class="empty">Nada ainda.</div>';
   const h = (S && S.history) || [];
@@ -675,7 +736,7 @@ function renderChatMeta() {
   const run = ((S && S.running) || []).find((r) => r.chatId === chat.id);
   $('#cSub').textContent = run ? 'enviando ' + run.label + ' (' + run.step + '/' + run.total + ')…' : inQ.length ? 'em remarketing: ' + inQ.map((e) => e.rule).join(', ') : fmtPhone(chat.id);
   const ban = $('#cBanner');
-  if (S && !macOnline()) { ban.textContent = 'Mac offline — o que você mandar sai quando ele voltar (até 15 min)'; ban.classList.remove('hide'); } else ban.classList.add('hide');
+  if (S && !macOnline()) { ban.textContent = 'Mac e servidor sem sinal — o que você mandar sai quando um voltar (até 15 min)'; ban.classList.remove('hide'); } else ban.classList.add('hide');
   renderQuick(false);
 }
 function renderQuick(force) {
