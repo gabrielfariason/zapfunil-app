@@ -253,7 +253,7 @@ label.l{display:block;font-size:13px;color:var(--mute);margin:14px 0 6px}
 <script src="lame.min.js"></script>
 <script>
 {
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.0.1';
 const SB_URL = 'https://kjntxjencxxauhzulera.supabase.co';
 const SB_KEY = 'sb_publishable_UsD2jKHI97zFRkSHkM87iA_G0KKfrWq';
 const $ = (s, r) => (r || document).querySelector(s);
@@ -544,7 +544,7 @@ async function renderPush() {
   if (pushSub) {
     const { data } = await sb.from('zf_push_subs').select('prefs').eq('endpoint', pushSub.endpoint).maybeSingle();
     if (data && data.prefs) pushPrefs = Object.assign(pushPrefs, data.prefs);
-    else await saveSub(pushSub);
+    else await saveSub(pushSub).catch((e) => toast(e.message));
   }
   const on = !!pushSub && Notification.permission === 'granted';
   const sw = (k, t, s) => `<div class="row"><span class="col"><span class="t">${t}</span><span class="s" style="white-space:normal">${s}</span></span><label class="sw"><input type="checkbox" data-pref="${k}" ${pushPrefs[k] !== false ? 'checked' : ''} ${on ? '' : 'disabled'}><i></i></label></div>`;
@@ -559,7 +559,8 @@ async function renderPush() {
 }
 async function saveSub(sub) {
   const j = sub.toJSON();
-  await sb.from('zf_push_subs').upsert({ user_id: userId, endpoint: j.endpoint, keys: j.keys, prefs: pushPrefs, ua: navigator.userAgent.slice(0, 200) }, { onConflict: 'endpoint' });
+  const { error } = await sb.from('zf_push_subs').upsert({ user_id: userId, endpoint: j.endpoint, keys: j.keys, prefs: pushPrefs, ua: navigator.userAgent.slice(0, 200) }, { onConflict: 'user_id,endpoint' });
+  if (error) throw new Error('não consegui registrar o aparelho (' + error.message + ')');
 }
 async function enablePush() {
   try {
