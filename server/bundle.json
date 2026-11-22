@@ -1,5 +1,5 @@
 {
- "version": "1.7.0-d5ada306",
+ "version": "1.9.0-1a57cd5b",
  "files": [
   "background.js",
   "common.js",
@@ -20,6 +20,8 @@
   "lib/qrcode.js",
   "lib/wppconnect-wa.js",
   "manifest.json",
+  "offscreen.html",
+  "offscreen.js",
   "page.js",
   "remote.js"
  ]
