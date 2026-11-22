@@ -95,6 +95,7 @@
       if (k === 'engineLock') continue;
       if (k === 'settings') {
         DB.settings = Object.assign({}, ZF.DEFAULT_SETTINGS, changes[k].newValue || {});
+        ZF.setVariations(DB.settings.variations);
         updateStatus();
       }
       else if (ZF.KEYS.includes(k)) DB[k] = changes[k].newValue || (ZF.OBJ_KEYS.includes(k) ? {} : []);
@@ -125,6 +126,61 @@
       h.unshift(entry);
       return h.slice(0, 500);
     });
+    statRun(entry);
+  }
+
+  // ---------------------------------------------------------------- relatório (contadores por dia)
+  function statCat(source) {
+    return String(source || 'manual').split(':')[0].replace(/\s*\(.*$/, '').trim().toLowerCase() || 'manual';
+  }
+  function bumpStats(fn, t) {
+    return mutate('stats', (s) => {
+      const k = ZF.dayKey(t);
+      const d = s[k] || (s[k] = {});
+      fn(d);
+      const keep = Math.max(7, Number(DB && DB.settings && DB.settings.statsDays) || 120);
+      const days = Object.keys(s).filter((x) => /^\d{4}-/.test(x)).sort();
+      while (days.length > keep) delete s[days.shift()];
+      return s;
+    }).catch(() => {});
+  }
+  const inc = (o, k, n) => (o[k] = (o[k] || 0) + (n || 1));
+  function statRun(entry, t) {
+    return bumpStats((d) => {
+      if (entry.err === 'Cancelado') return inc(d, 'cancel');
+      inc(d, entry.ok ? 'ok' : 'fail');
+      if (!entry.ok) return;
+      d.src = d.src || {};
+      inc(d.src, statCat(entry.source));
+      d.top = d.top || {};
+      if (Object.keys(d.top).length < 80 || d.top[entry.what]) inc(d.top, String(entry.what || '?').slice(0, 60));
+      const num = String(entry.chatId || '').replace(/@.*/, '');
+      d.chats = d.chats || [];
+      if (num && d.chats.length < 3000 && !d.chats.includes(num)) d.chats.push(num);
+    }, t);
+  }
+  // primeira vez: monta o relatório a partir do histórico que já existe
+  async function seedStats() {
+    const cur = (await chrome.storage.local.get('stats')).stats || {};
+    if (cur.__seeded) return;
+    const hist = ((await chrome.storage.local.get('history')).history || []).slice().reverse();
+    await mutate('stats', (s) => {
+      if (s.__seeded) return s;
+      for (const e of hist) {
+        const k = ZF.dayKey(e.t);
+        const d = s[k] || (s[k] = {});
+        if (e.err === 'Cancelado') { inc(d, 'cancel'); continue; }
+        inc(d, e.ok ? 'ok' : 'fail');
+        if (!e.ok) continue;
+        d.src = d.src || {}; inc(d.src, statCat(e.source));
+        d.top = d.top || {}; inc(d.top, String(e.what || '?').slice(0, 60));
+        const num = String(e.chatId || '').replace(/@.*/, '');
+        d.chats = d.chats || [];
+        if (num && !d.chats.includes(num)) d.chats.push(num);
+      }
+      s.__seeded = Date.now();
+      return s;
+    }).catch(() => {});
   }
 
   // ---------------------------------------------------------------- liderança (só uma aba roda o motor)
@@ -231,27 +287,49 @@
     return DB.funnels.find((f) => f.id === id);
   }
 
+  // Acompanhamento do envio (painel "Enviando agora" e contador abaixo do ⚡)
+  // phase: aguardando | digitando | gravando | enviando | resposta ; nextAt = quando a próxima mensagem sai
+  function setPhase(run, phase, secs) {
+    if (!run) return;
+    run.phase = phase;
+    if (phase === 'enviando') run.nextAt = Date.now();
+    else if (phase === 'digitando' || phase === 'gravando') run.nextAt = Date.now() + secs * 1000;
+    updateCountdowns();
+  }
+  // Tempo de "digitando…/gravando…" de um item (segundos)
+  function simSeconds(item, ctx) {
+    const s = DB.settings;
+    if (item.type === 'text') {
+      const text = ZF.applyVars(item.text || '', ctx);
+      return Math.min(s.typingMax, Math.max(s.typingMin, text.length / Math.max(1, s.typingCps)));
+    }
+    if (item.type === 'audio') return Math.min(s.recordingMax, Math.max(2, (item.duration || 5) * s.recordingFactor));
+    return 1.5;
+  }
+  // opts.simSecs: quanto tempo simular (já descontado do intervalo do funil)
   async function sendItem(chatId, item, ctx, run, opts) {
     opts = opts || {};
-    const s = DB.settings;
     const simulate = opts.simulate !== false;
+    const secs = simulate ? (opts.simSecs != null ? opts.simSecs : simSeconds(item, ctx)) : 0;
     if (item.type === 'text') {
       const text = ZF.applyVars(item.text, ctx);
       if (!text.trim()) return;
-      if (simulate) {
-        const secs = Math.min(s.typingMax, Math.max(s.typingMin, text.length / Math.max(1, s.typingCps)));
+      if (secs > 0.2) {
+        setPhase(run, 'digitando', secs);
         await call('typing', chatId, Math.round(secs * 1000));
         await wait(secs * 1000, run);
       }
+      setPhase(run, 'enviando', 0);
       markBot(chatId);
       await call('sendText', chatId, text);
       markBot(chatId);
     } else if (item.type === 'audio') {
-      if (simulate) {
-        const secs = Math.min(s.recordingMax, Math.max(2, (item.duration || 5) * s.recordingFactor));
+      if (secs > 0.2) {
+        setPhase(run, 'gravando', secs);
         await call('recording', chatId, Math.round(secs * 1000));
         await wait(secs * 1000, run);
       }
+      setPhase(run, 'enviando', 0);
       markBot(chatId);
       await call('sendFile', chatId, item.data, {
         type: 'audio',
@@ -260,10 +338,12 @@
         filename: item.filename || undefined
       });
     } else {
-      if (simulate) {
-        await call('typing', chatId, 1500);
-        await wait(1500, run);
+      if (secs > 0.2) {
+        setPhase(run, 'digitando', secs);
+        await call('typing', chatId, Math.round(secs * 1000));
+        await wait(secs * 1000, run);
       }
+      setPhase(run, 'enviando', 0);
       const o = { type: item.type, caption: ZF.applyVars(item.caption || '', ctx) || undefined };
       if (item.mime) o.mimetype = item.mime;
       if (item.filename) o.filename = item.filename;
@@ -273,6 +353,7 @@
       markBot(chatId);
       await call('sendFile', chatId, item.data, o);
     }
+    bumpStats((d) => { inc(d, 'msgs'); d.types = d.types || {}; inc(d.types, item.type); });
     markBot(chatId);
     try { await call('paused', chatId); } catch (e) {}
   }
@@ -332,22 +413,60 @@
     renderRunning();
     let ok = true;
     let err = '';
-    try {
-      for (let i = 0; i < funnel.steps.length; i++) {
-        const st = funnel.steps[i];
-        run.step = i + 1;
+    // ramificação: manda outro funil/mensagem no lugar do resto deste funil
+    const runBranch = async (target, depth) => {
+      const [tt, ...rest] = String(target).split(':');
+      const br = targetToFunnel(tt, rest.join(':'));
+      if (!br || depth > 3) return;
+      run.total += br.steps.length;
+      run.label = funnel.name + ' → ' + br.name;
+      run.branchKey = funnelKey(br);
+      renderRunning();
+      await runSteps(br.steps, depth + 1);
+    };
+    const runSteps = async (steps, depth) => {
+      for (let i = 0; i < steps.length; i++) {
+        const st = steps[i];
+        run.step++;
         renderRunning();
         if (st.kind === 'wait_reply') {
+          run.phase = 'resposta';
+          run.nextAt = st.timeoutMin ? Date.now() + st.timeoutMin * 60000 : null;
+          run.nextLabel = '';
+          updateCountdowns();
           const got = await waitForReply(chatId, (st.timeoutMin || 0) * 60000, run);
-          if (!got && st.onTimeout === 'stop') break;
+          const action = got ? st.onReply || 'continue' : st.onTimeout || 'continue';
+          if (action === 'stop') return 'stop';
+          if (action !== 'continue') {
+            await runBranch(action, depth);
+            return 'stop';
+          }
           continue;
         }
         const delay = Math.max(0, Number(st.delay) || 0);
-        if (delay) await wait(delay * 1000, run);
         const item = getItem(st.itemId);
-        if (!item) continue; // item apagado – pula
-        await sendItem(chatId, item, ctx, run, { simulate: st.simulate !== false });
+        if (!item) {
+          if (delay) await wait(delay * 1000, run);
+          continue; // item apagado – pula
+        }
+        // O intervalo configurado é o tempo TOTAL entre uma mensagem e a próxima:
+        // o "gravando…/digitando…" acontece dentro dele (não soma). Ex.: 30 s → sai em 30 s.
+        const simulate = st.simulate !== false;
+        let sim = simulate ? simSeconds(item, ctx) : 0;
+        run.nextLabel = (item.type === 'audio' ? '🎤 ' : item.type === 'text' ? '💬 ' : item.type === 'document' ? '📄 ' : '🖼️ ') + (item.name || '');
+        run.phase = 'aguardando';
+        run.nextAt = Date.now() + (delay ? delay : sim) * 1000;
+        updateCountdowns();
+        if (delay) {
+          sim = Math.min(sim, delay);
+          if (delay - sim > 0) await wait((delay - sim) * 1000, run);
+        }
+        await sendItem(chatId, item, ctx, run, { simulate, simSecs: sim });
       }
+      return 'done';
+    };
+    try {
+      await runSteps(funnel.steps, 0);
     } catch (e) {
       if (e instanceof Cancelled) {
         ok = false;
@@ -362,6 +481,8 @@
       renderRunning();
     }
     if (ok && !isRmkt) rmktEnqueue(chatId, funnelKey(funnel), ctx).catch((e) => console.warn('[ZapFunil] rmkt', e));
+    // o funil/mensagem enviado pelo caminho "se responder / se não responder" também dispara o remarketing dele
+    if (ok && !isRmkt && run.branchKey) rmktEnqueue(chatId, run.branchKey, ctx).catch((e) => console.warn('[ZapFunil] rmkt', e));
     logHistory({ chatId, name: ctx.name || '', what: funnel.name, source: source || 'manual', ok, err });
     if (!ok && err !== 'Cancelado') notifyPhone('error', '❌ Falha ao enviar', funnel.name + ' → ' + (ctx.name || chatId.replace(/@.*/, '')) + ': ' + err, { tag: 'err-' + chatId, url: './#c=' + encodeURIComponent(chatId) });
     if (!ok && err !== 'Cancelado') throw new Error(err);
@@ -598,9 +719,15 @@
     const st = rule.stages[entry.stageIdx];
     if (!st) return null;
     if (entry.mode === 'inactive' && !entry.lastFromMe) return null; // aguardando você responder
+    if (entry.mode === 'on_reply' && !entry.gotReply) return null; // aguardando o lead responder
     return entry.baseAt + (Number(st.delay) || 0) * 1000;
   }
   const ACTIVE = (e) => e.status === 'waiting' || e.status === 'sending';
+  // "Se responder": prazo para o lead responder (0 = sem prazo)
+  function replyExpire(rule, now) {
+    const h = rule.replyWindowHours == null ? 72 : Number(rule.replyWindowHours) || 0;
+    return h > 0 ? now + h * 3600000 : null;
+  }
 
   async function rmktEnqueue(chatId, key, ctx, onlyRuleId) {
     const rules = (DB.remarketing || []).filter((r) => (onlyRuleId ? r.id === onlyRuleId : r.enabled && (r.triggers || []).includes(key)) && r.stages && r.stages.length);
@@ -618,6 +745,10 @@
           }
         });
         const entry = { id: ZF.uid(), chatId, name: ctx.name || '', ruleId: rule.id, mode: rule.mode || 'no_reply', stageIdx: 0, baseAt: now, lastFromMe: true, status: 'waiting', attempts: 0, createdAt: now, sent: [] };
+        if (entry.mode === 'on_reply') {
+          entry.gotReply = false;
+          entry.expireAt = replyExpire(rule, now);
+        }
         entry.dueAt = stageDueAt(rule, entry);
         q.push(entry);
       }
@@ -653,11 +784,13 @@
         return b;
       });
       await mutate('rmktQueue', (q) => q.map((e) => (e.chatId === m.chatId && ACTIVE(e) ? Object.assign({}, e, { status: 'cancelled', reason: 'lead pediu para parar', endedAt: now }) : e)));
+      bumpStats((d) => inc(d, 'optout'));
       return;
     }
     if (!(DB.rmktQueue || []).some((e) => e.chatId === m.chatId && ACTIVE(e))) return;
     const ownEcho = m.fromMe && isBotEcho(m.chatId);
     if (ownEcho) return; // mensagem enviada pela própria extensão
+    let replies = 0;
     await mutate('rmktQueue', (q) =>
       q.map((e) => {
         if (e.chatId !== m.chatId || !ACTIVE(e)) return e;
@@ -665,9 +798,12 @@
         if (!rule) return e;
         // chegou mensagem enquanto uma etapa estava sendo enviada: guarda para aplicar logo depois
         if (e.status === 'sending') return Object.assign({}, e, { midMsgs: (e.midMsgs || []).concat([{ fromMe: !!m.fromMe, t: now }]) });
-        return applyMsg(rule, e, !!m.fromMe, now);
+        const n = applyMsg(rule, e, !!m.fromMe, now);
+        if (!m.fromMe && ((n.status === 'replied' && e.status !== 'replied') || (e.mode === 'on_reply' && !e.gotReply && n.gotReply))) replies++;
+        return n;
       })
     );
+    if (replies) bumpStats((d) => inc(d, 'replied'));
   }
 
   function applyMsg(rule, e, fromMe, now) {
@@ -680,6 +816,19 @@
           n.dueAt = stageDueAt(rule, n);
           return n;
         }
+        if (e.mode === 'on_reply') {
+          // se responder: a resposta do lead agenda a próxima etapa (conta da última mensagem dele)
+          if (!fromMe) {
+            n.gotReply = true;
+            n.baseAt = now;
+            n.lastFromMe = false;
+            n.dueAt = stageDueAt(rule, n);
+            return n;
+          }
+          // você respondeu na mão depois que o lead respondeu: não atropela sua conversa
+          if (e.gotReply && rule.stopOnManual !== false) return Object.assign(n, { status: 'cancelled', reason: 'você respondeu manualmente', endedAt: now, dueAt: null });
+          return e;
+        }
         // não respondeu
         if (!fromMe) return Object.assign(n, { status: 'replied', reason: 'lead respondeu', endedAt: now, dueAt: null });
         if (rule.stopOnManual !== false) return Object.assign(n, { status: 'cancelled', reason: 'você respondeu manualmente', endedAt: now, dueAt: null });
@@ -690,6 +839,10 @@
   async function rmktTick() {
     if (!isLeader || !waReady || rmktBusy || !autoOn()) return;
     const now = Date.now();
+    // "Se responder": lead não respondeu dentro do prazo → encerra
+    if ((DB.rmktQueue || []).some((e) => e.status === 'waiting' && e.mode === 'on_reply' && !e.gotReply && e.expireAt && e.expireAt <= now)) {
+      await mutate('rmktQueue', (q) => q.map((e) => (e.status === 'waiting' && e.mode === 'on_reply' && !e.gotReply && e.expireAt && e.expireAt <= Date.now() ? Object.assign({}, e, { status: 'expired', reason: e.stageIdx ? 'lead não respondeu mais' : 'lead não respondeu no prazo', endedAt: Date.now(), dueAt: null }) : e)));
+    }
     const due = (DB.rmktQueue || []).filter((e) => e.status === 'waiting' && e.dueAt && e.dueAt <= now).sort((a, b) => a.dueAt - b.dueAt);
     if (!due.length) return;
     rmktBusy = true;
@@ -755,6 +908,10 @@
   function advance(rule, x, now, note) {
     const sent = (x.sent || []).concat([{ stage: x.stageIdx, t: now, note: note || '' }]);
     let out = Object.assign({}, x, { sent, attempts: 0, lastError: '', stageIdx: x.stageIdx + 1, baseAt: now, lastFromMe: true, status: 'waiting', midMsgs: [] });
+    if (out.mode === 'on_reply') {
+      out.gotReply = false; // próxima etapa só depois de uma nova resposta
+      out.expireAt = replyExpire(rule, now);
+    }
     // mensagens que chegaram enquanto a etapa era enviada contam como "depois do envio"
     for (const mm of x.midMsgs || []) {
       if (out.status !== 'waiting') break;
@@ -783,7 +940,8 @@
   }
 
   // ---------------------------------------------------------------- UI: painel flutuante
-  let root, listEl, runEl, statusDot, searchEl;
+  let root, listEl, runEl, statusDot, searchEl, fabCd, folderEl;
+  let panelFolder = '';
   let activeTab = 'all';
 
   function el(tag, attrs, children) {
@@ -800,6 +958,26 @@
     return e;
   }
 
+  // Depois de atualizar a extensão (↻), esta aba fica com o código antigo "desligado" até dar F5
+  function extAlive() {
+    try {
+      return !!(chrome.runtime && chrome.runtime.id);
+    } catch (e) {
+      return false;
+    }
+  }
+  let reloadBanner = null;
+  function showReloadBanner() {
+    if (reloadBanner) return;
+    reloadBanner = el('div', { class: 'zf-reload' }, [
+      el('span', { text: '⚡ A ZapFunil foi atualizada. Aperte F5 para continuar usando (o WhatsApp não desconecta).' }),
+      el('button', { text: 'Recarregar agora', onclick: () => location.reload() })
+    ]);
+    document.body.appendChild(reloadBanner);
+  }
+  setInterval(() => {
+    if (!extAlive()) showReloadBanner();
+  }, 5000);
   function toast(msg, kind) {
     const t = el('div', { class: 'zf-toast zf-toast-' + (kind || 'info'), text: msg });
     document.body.appendChild(t);
@@ -815,6 +993,8 @@
     const fab = el('button', { class: 'zf-fab', title: 'ZapFunil', onclick: togglePanel }, ['⚡']);
     statusDot = el('span', { class: 'zf-dot' });
     fab.appendChild(statusDot);
+    // contador abaixo do ⚡ quando tem envio rodando
+    fabCd = el('div', { class: 'zf-fabcd', onclick: () => togglePanel() });
 
     const tabs = [
       ['all', 'Tudo'],
@@ -836,6 +1016,12 @@
     });
 
     searchEl = el('input', { class: 'zf-search', placeholder: 'Buscar ou /atalho…', oninput: renderList });
+    folderEl = el('select', { class: 'zf-folder', title: 'Pasta', onchange: () => {
+      panelFolder = folderEl.value;
+      chrome.storage.local.set({ panelFolder });
+      renderList();
+    } });
+    chrome.storage.local.get('panelFolder').then((d) => { panelFolder = d.panelFolder || ''; renderList(); });
     listEl = el('div', { class: 'zf-list' });
     runEl = el('div', { class: 'zf-running' });
 
@@ -854,6 +1040,7 @@
         el('button', { class: 'zf-icon-btn', title: 'Fechar', onclick: togglePanel }, ['✕'])
       ]),
       searchEl,
+      folderEl,
       tabBar,
       runEl,
       listEl,
@@ -864,6 +1051,7 @@
     ]);
     root.appendChild(panel);
     root.appendChild(fab);
+    root.appendChild(fabCd);
     document.body.appendChild(root);
     chrome.storage.local.get('panelOpen').then((d) => {
       if (d.panelOpen) root.classList.add('zf-open');
@@ -892,6 +1080,21 @@
     if (!listEl || !DB) return;
     const q = ZF.normalizeText(searchEl.value).replace(/^\//, '');
     listEl.innerHTML = '';
+    // pastas: o seletor só aparece se você criou alguma pasta no painel de controle
+    const fl = ZF.folders((DB.items || []).concat(DB.funnels || []));
+    if (folderEl) {
+      if (panelFolder && panelFolder !== '__none' && !fl.includes(panelFolder)) panelFolder = '';
+      folderEl.style.display = fl.length ? '' : 'none';
+      const opts = [['', '📁 Todas as pastas']].concat(fl.map((f) => [f, '📁 ' + f]), [['__none', 'Sem pasta']]);
+      const sig = opts.map((o) => o[0]).join('|');
+      if (folderEl.dataset.sig !== sig) {
+        folderEl.innerHTML = '';
+        opts.forEach(([v, t]) => folderEl.appendChild(el('option', { value: v }, [t])));
+        folderEl.dataset.sig = sig;
+      }
+      folderEl.value = panelFolder;
+    }
+    const inFolder = (o) => !fl.length || !panelFolder || (panelFolder === '__none' ? !String(o.folder || '').trim() : String(o.folder || '').trim() === panelFolder);
     if (activeTab === 'rmkt') return renderRmktTab(q);
     const rows = [];
     if (activeTab === 'all' || activeTab === 'funnel') {
@@ -907,9 +1110,10 @@
     const filtered = rows
       .map((r, i) => Object.assign(r, { g: GROUP[r.kind === 'funnel' ? 'funnel' : r.obj.type], i }))
       .filter((r) => {
-        if (!q) return true;
         const o = r.obj;
-        return ZF.normalizeText([o.name, o.shortcut, o.text, o.caption].join(' ')).includes(q);
+        if (!inFolder(o)) return false;
+        if (!q) return true;
+        return ZF.normalizeText([o.name, o.shortcut, o.text, o.caption, o.folder].join(' ')).includes(q);
       })
       .sort((a, b) => a.g - b.g || a.i - b.i);
     if (!filtered.length) {
@@ -973,7 +1177,7 @@
         el('span', { class: 'zf-row-icon', text: '🔔' }),
         el('span', { class: 'zf-row-main' }, [
           el('span', { class: 'zf-row-name', text: r.name + (r.enabled ? '' : ' (pausada)') }),
-          el('span', { class: 'zf-row-sub', text: r.stages.length + ' etapa(s) · ' + (r.mode === 'inactive' ? 'conversa parada' : 'se não responder') })
+          el('span', { class: 'zf-row-sub', text: r.stages.length + ' etapa(s) · ' + (r.mode === 'inactive' ? 'conversa parada' : r.mode === 'on_reply' ? 'se responder' : 'se não responder') })
         ])
       ]));
     });
@@ -986,7 +1190,10 @@
     for (const [chatId, run] of running.entries()) {
       total++;
       runEl.appendChild(el('div', { class: 'zf-run' }, [
-        el('span', { text: '▶ ' + run.label + ' → ' + run.name + ' (' + run.step + '/' + run.total + ')' }),
+        el('span', { class: 'zf-run-txt' }, [
+          el('span', { text: '▶ ' + run.label + ' → ' + run.name + ' (' + run.step + '/' + run.total + ')' }),
+          el('span', { class: 'zf-cd', 'data-chat': chatId, text: cdText(run) })
+        ]),
         el('button', { class: 'zf-cancel', title: 'Parar este envio', onclick: () => { run.cancelled = true; toast('Envio cancelado'); } }, ['■']),
         (queues.get(chatId) || []).length ? el('button', { class: 'zf-cancel', title: 'Parar e limpar a fila desta conversa', onclick: () => { stopChat(chatId); toast('Conversa parada e fila limpa'); } }, ['✕ tudo']) : null
       ]));
@@ -998,6 +1205,52 @@
       });
     }
     if (total) runEl.prepend(el('div', { class: 'zf-run-title', text: 'Enviando agora (' + total + ' conversa' + (total > 1 ? 's' : '') + ')' }));
+    updateCountdowns();
+  }
+
+  function fmtLeft(ms) {
+    const t = Math.max(0, Math.ceil(ms / 1000));
+    if (t < 60) return t + 's';
+    if (t < 3600) return Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0');
+    return Math.floor(t / 3600) + 'h' + String(Math.floor((t % 3600) / 60)).padStart(2, '0');
+  }
+  function cdText(run) {
+    const left = run.nextAt ? run.nextAt - Date.now() : null;
+    const what = run.nextLabel ? ' ' + run.nextLabel : '';
+    if (run.phase === 'enviando') return '⬆️ enviando' + what + '…';
+    if (run.phase === 'gravando') return '🎙️ gravando… sai em ' + fmtLeft(left);
+    if (run.phase === 'digitando') return '✍️ digitando… sai em ' + fmtLeft(left);
+    if (run.phase === 'resposta') return '💬 esperando resposta' + (left != null ? ' (até ' + fmtLeft(left) + ')' : '');
+    if (left != null) return '⏱ próxima em ' + fmtLeft(left) + what;
+    return '';
+  }
+  // Atualiza só os contadores (1x por segundo), sem redesenhar a lista
+  function updateCountdowns() {
+    try {
+      if (runEl) {
+        for (const sp of runEl.querySelectorAll('.zf-cd')) {
+          const run = running.get(sp.dataset.chat);
+          if (run) sp.textContent = cdText(run);
+        }
+      }
+      if (!fabCd) return;
+      const runs = Array.from(running.values());
+      if (!runs.length) {
+        fabCd.classList.remove('zf-show');
+        return;
+      }
+      const soon = runs.filter((r) => r.nextAt).sort((a, b) => a.nextAt - b.nextAt)[0];
+      let txt = '';
+      if (soon && soon.phase === 'enviando') txt = '⬆️';
+      else if (soon && soon.phase === 'gravando') txt = '🎙️ ' + fmtLeft(soon.nextAt - Date.now());
+      else if (soon && soon.phase === 'digitando') txt = '✍️ ' + fmtLeft(soon.nextAt - Date.now());
+      else if (soon && soon.phase === 'resposta') txt = '💬';
+      else if (soon) txt = fmtLeft(soon.nextAt - Date.now());
+      else txt = '•••';
+      fabCd.textContent = txt + (runs.length > 1 ? ' ·' + runs.length : '');
+      fabCd.title = runs.map((r) => r.label + ' → ' + r.name + ': ' + cdText(r)).join('\n');
+      fabCd.classList.add('zf-show');
+    } catch (e) {}
   }
 
   async function sendFromPanel(r) {
@@ -1410,6 +1663,10 @@
           await mutate('funnels', (arr) => arr.map((f) => (f.id === funSel.value ? Object.assign({}, f, { steps: f.steps.concat([{ kind: 'send', itemId: item.id, delay: f.steps.length ? 3 : 0, delayUnit: 's', simulate: true }]) }) : f)));
         }
       } catch (e) {
+        if (!extAlive() || /context invalidated/i.test(e.message || '')) {
+          showReloadBanner();
+          return (err.textContent = 'A extensão foi atualizada: aperte F5 nesta página e salve de novo.');
+        }
         return (err.textContent = 'Erro ao salvar: ' + e.message);
       }
       closeSave();
@@ -1634,7 +1891,7 @@
       items: DB.items.map((i) => ({ id: i.id, type: i.type, name: i.name, shortcut: i.shortcut || '', text: i.type === 'text' ? (i.text || '').slice(0, 160) : (i.caption || '').slice(0, 100), duration: i.duration || 0 })),
       funnels: DB.funnels.map((f) => ({ id: f.id, name: f.name, steps: f.steps.length })),
       rules: (DB.remarketing || []).map((r) => ({ id: r.id, name: r.name, enabled: !!r.enabled, stages: r.stages.length, mode: r.mode })),
-      queue: (DB.rmktQueue || []).filter(ACTIVE).slice(-200).map((e) => ({ id: e.id, chatId: e.chatId, name: e.name, rule: ruleName(e.ruleId), stage: e.stageIdx + 1, total: ((DB.remarketing || []).find((r) => r.id === e.ruleId) || { stages: [] }).stages.length, dueAt: e.dueAt, status: e.status })),
+      queue: (DB.rmktQueue || []).filter(ACTIVE).slice(-200).map((e) => ({ id: e.id, chatId: e.chatId, name: e.name, rule: ruleName(e.ruleId), stage: e.stageIdx + 1, total: ((DB.remarketing || []).find((r) => r.id === e.ruleId) || { stages: [] }).stages.length, dueAt: e.dueAt, status: e.status, mode: e.mode })),
       campaigns: DB.campaigns.map((c) => ({ id: c.id, name: c.name, status: c.status, total: c.contacts.length, progress: c.progress || 0, sent: c.sent || 0, failed: c.failed || 0 })),
       schedules: DB.schedules.filter((x) => x.status === 'pending' || x.status === 'paused').map((x) => ({ id: x.id, at: x.at, numbers: x.numbers.slice(0, 5), n: x.numbers.length, target: (targetToFunnel(x.targetType, x.targetId) || {}).name || '?', status: x.status })),
       history: (DB.history || []).slice(0, 40).map((h) => ({ t: h.t, name: h.name, chatId: h.chatId, what: h.what, source: h.source, ok: h.ok, err: h.err })),
@@ -1700,8 +1957,10 @@
     if (isLeader) {
       await recoverSchedules();
       await rmktRecover();
+      seedStats().catch(() => {});
     }
     initDone = true;
+    every(updateCountdowns, 1000);
     every(heartbeat, 10000);
     every(schedulerTick, 15000);
     every(campaignTick, 5000);

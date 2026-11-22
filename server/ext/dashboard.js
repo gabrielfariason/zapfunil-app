@@ -19,9 +19,38 @@
   async function reload() {
     DB = await ZF.load();
   }
+  const pending = {}; // chaves sendo gravadas por este painel (ignora o "eco" para não voltar estado antigo)
   async function persist(key) {
-    await ZF.save({ [key]: DB[key] });
+    pending[key] = (pending[key] || 0) + 1;
+    try {
+      await ZF.save({ [key]: DB[key] });
+    } catch (e) {
+      if (/context invalidated/i.test((e && e.message) || '')) staleBanner();
+      throw e;
+    } finally {
+      setTimeout(() => (pending[key] = Math.max(0, (pending[key] || 0) - 1)), 50);
+    }
   }
+  // painel aberto antes de atualizar a extensão: precisa recarregar a página
+  function staleBanner() {
+    if (document.getElementById('zfStale')) return;
+    const b = document.createElement('div');
+    b.id = 'zfStale';
+    b.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:9999;background:#2a2d34;color:#f5f5f7;border:1px solid #f2b632;border-radius:12px;padding:10px 14px;display:flex;gap:12px;align-items:center;box-shadow:0 8px 24px rgba(0,0,0,.35)';
+    b.innerHTML = '<span>A extensão foi atualizada. Recarregue esta página para salvar.</span><button class="btn sm">Recarregar</button>';
+    b.querySelector('button').onclick = () => location.reload();
+    document.body.appendChild(b);
+  }
+  window.addEventListener('unhandledrejection', (ev) => {
+    if (/context invalidated/i.test((ev.reason && ev.reason.message) || String(ev.reason || ''))) staleBanner();
+  });
+  setInterval(() => {
+    try {
+      if (!chrome.runtime || !chrome.runtime.id) staleBanner();
+    } catch (e) {
+      staleBanner();
+    }
+  }, 5000);
   function openModal(html) {
     $('#modalBox').innerHTML = html;
     $('#modal').classList.remove('hidden');
@@ -88,15 +117,19 @@
       })
       .filter((c) => c.number.length >= 10);
   }
-  const VAR_BTNS = `<div class="vars">
+  function varBtns() {
+    const custom = (DB && DB.settings && DB.settings.variations) || [];
+    return `<div class="vars">
     <button type="button" data-ins="{nome}">{nome}</button>
     <button type="button" data-ins="{primeiro_nome}">{primeiro_nome}</button>
     <button type="button" data-ins="{Saudacao}">{Saudacao}</button>
     <button type="button" data-ins="{saudacao}">{saudacao}</button>
     <button type="button" data-ins="{data}">{data}</button>
     <button type="button" data-ins="{hora}">{hora}</button>
+    ${custom.filter((v) => v && v.key).map((v) => `<button type="button" class="vv" data-ins="{${esc(v.key)}}" title="${esc((v.options || []).join(' / '))}">🔀 {${esc(v.key)}}</button>`).join('')}
     <button type="button" data-ins="{Oi|Olá|E aí}">{Oi|Olá|E aí} (aleatório)</button>
-  </div>`;
+  </div><div class="hint" style="margin-top:4px">🔀 = variações (sorteia uma a cada envio). Cadastre e edite em <a href="#settings">Configurações → Variações</a>.</div>`;
+  }
   function bindVarButtons(textarea) {
     $$('.vars button').forEach((b) =>
       b.addEventListener('click', () => {
@@ -174,12 +207,135 @@
   $('#openWa').addEventListener('click', () => chrome.runtime.sendMessage({ type: 'focusWhatsApp' }));
 
   function render() {
-    const fn = { mobile: renderMobile, items: renderItems, funnels: renderFunnels, remarketing: renderRemarketing, triggers: renderTriggers, schedules: renderSchedules, campaigns: renderCampaigns, history: renderHistory, settings: renderSettings }[view];
+    const fn = { mobile: renderMobile, items: renderItems, funnels: renderFunnels, remarketing: renderRemarketing, triggers: renderTriggers, schedules: renderSchedules, campaigns: renderCampaigns, report: renderReport, search: renderSearch, history: renderHistory, settings: renderSettings }[view] || renderItems;
     fn();
   }
 
   // Move um registro para cima/baixo dentro do grupo visível (respeita a ordem do array)
-  async function moveIn(key, id, dir, sameGroup) {
+  // ----- prévias leves: mídia só vira <video>/<audio> quando você clica (antes travava com vários vídeos)
+  const blobUrls = new Map();
+  async function blobUrl(item) {
+    const k = item.id + ':' + (item.data || '').length;
+    if (blobUrls.has(k)) return blobUrls.get(k);
+    const b = await (await fetch(item.data)).blob();
+    const u = URL.createObjectURL(b);
+    blobUrls.set(k, u);
+    return u;
+  }
+  function mediaPreview(i) {
+    if (i.type === 'image') return `<div class="mprev" data-mprev="${i.id}"><div class="mph">🖼️</div></div>`;
+    if (i.type === 'video') return `<button type="button" class="mprev play" data-play="${i.id}"><span>▶</span> Ver vídeo</button>`;
+    if (i.type === 'audio') return `<button type="button" class="mprev play" data-play="${i.id}"><span>▶</span> Ouvir</button>`;
+    return '';
+  }
+  function bindPreviews(root) {
+    const io = 'IntersectionObserver' in window ? new IntersectionObserver((ents) => {
+      ents.forEach(async (e) => {
+        if (!e.isIntersecting) return;
+        io.unobserve(e.target);
+        const it = DB.items.find((x) => x.id === e.target.dataset.mprev);
+        if (!it || !it.data) return;
+        try { e.target.innerHTML = `<img src="${await blobUrl(it)}" alt="">`; } catch (err) {}
+      });
+    }, { rootMargin: '200px' }) : null;
+    $$('[data-mprev]', root).forEach((el) => (io ? io.observe(el) : null));
+    $$('[data-play]', root).forEach((b) => (b.onclick = async (ev) => {
+      ev.stopPropagation();
+      const it = DB.items.find((x) => x.id === b.dataset.play);
+      if (!it) return;
+      b.disabled = true;
+      b.innerHTML = 'Carregando…';
+      try {
+        const u = await blobUrl(it);
+        const m = document.createElement(it.type === 'video' ? 'video' : 'audio');
+        m.src = u; m.controls = true; m.autoplay = true; m.className = 'mplayer';
+        b.replaceWith(m);
+      } catch (err) { b.textContent = 'Não consegui abrir'; }
+    }));
+  }
+
+  // ----- arrastar para reordenar: segure o ⋮⋮ e arraste (mouse ou toque)
+  function makeSortable(container, onDrop) {
+    $$('[data-row]', container).forEach((row) => {
+      const handle = $('.grip', row);
+      if (!handle) return;
+      handle.style.touchAction = 'none';
+      handle.onpointerdown = (e) => {
+        if (e.button !== undefined && e.button !== 0) return;
+        e.preventDefault();
+        const id = row.dataset.row;
+        let target = null, after = false, moved = false;
+        const sy = e.clientY;
+        try { handle.setPointerCapture(e.pointerId); } catch (x) {}
+        const clear = () => $$('.drop-before,.drop-after', container).forEach((x) => x.classList.remove('drop-before', 'drop-after'));
+        const move = (ev) => {
+          if (!moved && Math.abs(ev.clientY - sy) < 4) return;
+          moved = true;
+          row.classList.add('dragging');
+          const el = document.elementFromPoint(ev.clientX, ev.clientY);
+          const over = el && el.closest('[data-row]');
+          clear();
+          target = null;
+          if (!over || over === row || !container.contains(over)) return;
+          const r = over.getBoundingClientRect();
+          after = container.classList.contains('grid') ? ev.clientX > r.left + r.width / 2 : ev.clientY > r.top + r.height / 2;
+          over.classList.add(after ? 'drop-after' : 'drop-before');
+          target = over.dataset.row;
+          // rola a página perto das bordas
+          if (ev.clientY < 60) window.scrollBy(0, -12);
+          else if (ev.clientY > window.innerHeight - 60) window.scrollBy(0, 12);
+        };
+        const up = () => {
+          handle.removeEventListener('pointermove', move);
+          handle.removeEventListener('pointerup', up);
+          handle.removeEventListener('pointercancel', up);
+          row.classList.remove('dragging');
+          clear();
+          if (moved && target && target !== id) onDrop(id, target, after);
+        };
+        handle.addEventListener('pointermove', move);
+        handle.addEventListener('pointerup', up);
+        handle.addEventListener('pointercancel', up);
+      };
+    });
+  }
+  // move "id" para antes/depois de "targetId" só entre os do mesmo grupo (ex.: só áudios)
+  async function reorder(key, id, targetId, after, inGroup, render) {
+    const arr = DB[key];
+    const pos = [];
+    arr.forEach((x, i) => { if (inGroup(x)) pos.push(i); });
+    const sub = pos.map((i) => arr[i]);
+    const from = sub.findIndex((x) => x.id === id);
+    if (from < 0) return;
+    const [moved] = sub.splice(from, 1);
+    let to = sub.findIndex((x) => x.id === targetId);
+    if (to < 0) return;
+    if (after) to++;
+    sub.splice(to, 0, moved);
+    pos.forEach((p, k) => (arr[p] = sub[k]));
+    if (render) render(); // mostra na hora; grava em seguida
+    await persist(key);
+  }
+  async function moveEdge(key, id, toTop, inGroup, render) {
+    const sub = DB[key].filter(inGroup);
+    if (sub.length < 2) return;
+    const target = toTop ? sub[0] : sub[sub.length - 1];
+    if (target.id === id) return;
+    await reorder(key, id, target.id, !toTop, inGroup, render);
+  }
+  let listMode = (() => { try { return localStorage.getItem('zfListMode') !== 'cards'; } catch (e) { return true; } })();
+  function viewToggle() {
+    return `<div class="seg"><button type="button" class="${listMode ? 'on' : ''}" data-vm="list">☰ Lista</button><button type="button" class="${listMode ? '' : 'on'}" data-vm="cards">▦ Cartões</button></div>`;
+  }
+  function bindViewToggle(again) {
+    $$('[data-vm]').forEach((b) => (b.onclick = () => {
+      listMode = b.dataset.vm === 'list';
+      try { localStorage.setItem('zfListMode', listMode ? 'list' : 'cards'); } catch (e) {}
+      again();
+    }));
+  }
+
+  async function moveIn(key, id, dir, sameGroup, render) {
     const arr = DB[key];
     const i = arr.findIndex((x) => x.id === id);
     if (i < 0) return;
@@ -187,7 +343,115 @@
     while (j >= 0 && j < arr.length && !sameGroup(arr[j])) j += dir;
     if (j < 0 || j >= arr.length) return;
     [arr[i], arr[j]] = [arr[j], arr[i]];
+    if (render) render();
     await persist(key);
+  }
+
+  // ----- pastas (mensagens e funis): uma pasta escolhida vale para todas as abas
+  let curFolder = (() => { try { return localStorage.getItem('zfFolder') || ''; } catch (e) { return ''; } })();
+  const folderOf = (x) => String((x && x.folder) || '').trim();
+  const allFolders = () => ZF.folders(DB.items.concat(DB.funnels));
+  function folderMatch(x, sel) {
+    return !sel || (sel === '__none' ? !folderOf(x) : folderOf(x) === sel);
+  }
+  function folderChips(pool) {
+    const fl = allFolders();
+    if (curFolder && curFolder !== '__none' && !fl.includes(curFolder)) curFolder = '';
+    if (!fl.length) return '';
+    const opts = [['', 'Todas']].concat(fl.map((f) => [f, '📁 ' + f]), [['__none', 'Sem pasta']]);
+    return '<div class="chips" id="fchips">' + opts.map(([v, t]) => {
+      const n = pool.filter((x) => folderMatch(x, v)).length;
+      return `<button type="button" class="chip ${curFolder === v ? 'on' : ''} ${n ? '' : 'zero'}" data-fsel="${esc(v)}">${esc(t)} <span>${n}</span></button>`;
+    }).join('') + '</div>';
+  }
+  function bindFolderChips(again) {
+    $$('#fchips [data-fsel]').forEach((b) => (b.onclick = () => {
+      curFolder = b.dataset.fsel;
+      try { localStorage.setItem('zfFolder', curFolder); } catch (e) {}
+      again();
+    }));
+  }
+  function folderField(cur) {
+    const def = cur != null ? cur : curFolder && curFolder !== '__none' ? curFolder : '';
+    return `<div><label>Pasta (opcional)</label><input type="text" id="fFolder" list="folderList" value="${esc(def)}" placeholder="ex: APEX, Afiliado…" autocomplete="off">
+      <datalist id="folderList">${allFolders().map((f) => `<option value="${esc(f)}">`).join('')}</datalist><div class="hint">Organiza a lista aqui e no painel ⚡ do WhatsApp</div></div>`;
+  }
+  const ftag = (x) => (folderOf(x) && !curFolder ? `<span class="ftag">📁 ${esc(folderOf(x))}</span>` : '');
+  // mover para pasta (botão 📁 de cada linha)
+  function moveToFolder(key, id, again) {
+    const obj = DB[key].find((x) => x.id === id);
+    if (!obj) return;
+    const fl = allFolders();
+    openModal(`<h2>📁 Mover para pasta</h2><p class="hint">${esc(obj.name)}</p>
+      <div class="chips" id="mvList" style="margin:10px 0 14px">${fl.map((f) => `<button type="button" class="chip ${folderOf(obj) === f ? 'on' : ''}" data-mv="${esc(f)}">📁 ${esc(f)}</button>`).join('')}<button type="button" class="chip ${folderOf(obj) ? '' : 'on'}" data-mv="">Sem pasta</button></div>
+      <label>Ou crie uma pasta nova</label><input type="text" id="mvNew" placeholder="Nome da pasta">
+      <div class="modal-foot"><button class="btn sec" id="cancel">Cancelar</button><button class="btn" id="mvOk">Criar e mover</button></div>`);
+    const apply = async (name) => {
+      name = String(name || '').trim().slice(0, 40);
+      if (name) obj.folder = name;
+      else delete obj.folder;
+      closeModal();
+      again();
+      await persist(key);
+      toast(name ? 'Movido para 📁 ' + name : 'Agora está sem pasta');
+    };
+    $$('#mvList [data-mv]').forEach((b) => (b.onclick = () => apply(b.dataset.mv)));
+    $('#mvOk').onclick = () => { const v = $('#mvNew').value.trim(); if (!v) return toast('Digite o nome da pasta'); apply(v); };
+    $('#mvNew').onkeydown = (e) => { if (e.key === 'Enter') $('#mvOk').click(); };
+    $('#cancel').onclick = closeModal;
+    setTimeout(() => $('#mvNew').focus(), 30);
+  }
+
+  // ----- excluir com "Desfazer" (em Configurações: quantos segundos, ou 0 = pedir confirmação)
+  let undoCur = null;
+  function undoSecs() {
+    const v = Number(DB.settings.undoSeconds);
+    return Number.isFinite(v) ? Math.max(0, Math.min(60, v)) : 8;
+  }
+  function closeUndo() {
+    const u = $('#undo');
+    if (undoCur) clearTimeout(undoCur.t);
+    undoCur = null;
+    u.classList.add('hidden');
+    u.innerHTML = '';
+  }
+  function showUndo(msg, onUndo) {
+    closeUndo();
+    const secs = undoSecs();
+    const u = $('#undo');
+    u.innerHTML = `<span>${esc(msg)}</span><button class="btn sm yel" type="button">↶ Desfazer</button><i class="ubar"></i>`;
+    u.classList.remove('hidden');
+    const bar = $('.ubar', u);
+    bar.style.width = '100%';
+    bar.animate([{ transform: 'scaleX(1)' }, { transform: 'scaleX(0)' }], { duration: secs * 1000, easing: 'linear', fill: 'forwards' });
+    const me = { t: setTimeout(closeUndo, secs * 1000) };
+    undoCur = me;
+    $('button', u).onclick = async () => {
+      if (undoCur !== me) return;
+      closeUndo();
+      try { await onUndo(); toast('Restaurado ✅'); } catch (e) { toast('Não consegui desfazer: ' + e.message); }
+    };
+  }
+  // remove 1 registro de DB[key]; devolve false se o usuário desistiu
+  async function removeWithUndo(key, id, label, extra) {
+    extra = extra || {};
+    const arr = DB[key];
+    const idx = arr.findIndex((x) => x.id === id);
+    if (idx < 0) return false;
+    const obj = arr[idx];
+    const secs = undoSecs();
+    if (!secs && !confirm('Excluir "' + label + '"?' + (extra.warn ? '\n\n' + extra.warn : ''))) return false;
+    DB[key] = arr.filter((x) => x.id !== id);
+    render();
+    await persist(key);
+    if (extra.after) await extra.after();
+    if (secs) showUndo('"' + label + '" excluído' + (extra.warn ? ' · ' + extra.warn : ''), async () => {
+      if (!DB[key].some((x) => x.id === id)) DB[key].splice(Math.min(idx, DB[key].length), 0, obj);
+      await persist(key);
+      if (extra.undo) await extra.undo();
+      render();
+    });
+    return true;
   }
 
   // ------------------------------------------------------------ ITENS
@@ -198,59 +462,83 @@
     document: { title: 'Documentos', sub: 'PDFs, planilhas e qualquer arquivo.', types: ['document'], newType: 'document' }
   };
 
+  let mediaSub = 'all'; // Mídias: todos | image | video
   function renderItems() {
     const info = FILTER_INFO[filter];
-    const items = DB.items.filter((i) => info.types.includes(i.type));
-    let h = `<h1>${info.title}</h1><p class="sub">${info.sub} A ordem aqui (↑↓) é a ordem no painel ⚡ do WhatsApp.</p>
-      <div class="bar"><input type="search" id="q" placeholder="Buscar…" style="max-width:320px"><span class="grow"></span>
-      <button class="btn" id="newItem">+ Novo</button></div>`;
-    if (!items.length) h += `<div class="empty">Nada aqui ainda. Clique em <b>+ Novo</b>.</div>`;
-    else {
+    const shownTypes = filter === 'media' && mediaSub !== 'all' ? [mediaSub] : info.types;
+    const pool = DB.items.filter((i) => shownTypes.includes(i.type));
+    const items = pool.filter((i) => folderMatch(i, curFolder));
+    let h = `<h1>${info.title}</h1><p class="sub">${info.sub} A ordem aqui é a ordem no painel ⚡ e na barra do WhatsApp — arraste pelo ⋮⋮ ou use ↑ ↓.</p>
+      <div class="bar"><input type="search" id="q" placeholder="Buscar nesta lista…" style="max-width:320px">${viewToggle()}${filter === 'media' ? `<div class="seg" id="msub"><button type="button" data-ms="all" class="${mediaSub === 'all' ? 'on' : ''}">Todos (${DB.items.filter((x) => x.type === 'image' || x.type === 'video').length})</button><button type="button" data-ms="image" class="${mediaSub === 'image' ? 'on' : ''}">🖼️ Imagens (${DB.items.filter((x) => x.type === 'image').length})</button><button type="button" data-ms="video" class="${mediaSub === 'video' ? 'on' : ''}">🎬 Vídeos (${DB.items.filter((x) => x.type === 'video').length})</button></div>` : ''}<span class="grow"></span>
+      <button class="btn" id="newItem">+ Novo</button></div>${folderChips(pool)}`;
+    const metaOf = (i) => {
+      const meta = [ZF.typeLabel(i.type)];
+      if (i.type === 'audio') meta.push(ZF.fmtDuration(i.duration));
+      if (i.data) meta.push(dataUrlSizeKb(i.data) + ' KB');
+      return meta.join(' · ');
+    };
+    const srch = (i) => esc(ZF.normalizeText([i.name, i.text, i.caption, i.shortcut, i.folder, i.filename].join(' ')));
+    if (!items.length) h += `<div class="empty">${pool.length ? 'Nada nesta pasta.' : 'Nada aqui ainda. Clique em <b>+ Novo</b>.'}</div>`;
+    else if (listMode) {
+      h += '<div class="list" id="grid">';
+      items.forEach((i, n) => {
+        const sub = i.type === 'text' ? esc((i.text || '').slice(0, 140)) : esc(metaOf(i)) + (i.caption ? ' · ' + esc(i.caption.slice(0, 80)) : '');
+        h += `<div class="lrow card" data-row="${i.id}" data-search="${srch(i)}">
+          <span class="grip" title="Arraste para mudar a ordem">⋮⋮</span><span class="lnum">${n + 1}</span>
+          <span class="licon">${ZF.typeIcon(i.type)}</span>
+          <div class="lmain"><div class="lname">${esc(i.name)} ${i.shortcut ? `<span class="tag">/${esc(i.shortcut)}</span>` : ''}${ftag(i)}</div><div class="lsub">${sub}</div></div>
+          ${i.type !== 'text' && i.type !== 'document' ? `<div class="lprev">${mediaPreview(i)}</div>` : ''}
+          <div class="lact"><button class="btn sm sec" data-top="${i.id}" title="Mandar para o topo">⤒</button><button class="btn sm sec" data-up="${i.id}" title="Subir">↑</button><button class="btn sm sec" data-down="${i.id}" title="Descer">↓</button>
+          <button class="btn sm sec" data-edit="${i.id}">Editar</button><button class="btn sm sec" data-fold="${i.id}" title="Mover para pasta">📁</button><button class="btn sm sec" data-dup="${i.id}" title="Duplicar">⧉</button><button class="btn sm red" data-del="${i.id}" title="Excluir">✕</button></div></div>`;
+      });
+      h += '</div>';
+    } else {
       h += '<div class="grid" id="grid">';
       items.forEach((i) => {
         let preview = '';
         if (i.type === 'text') preview = `<div class="body">${esc(i.text)}</div>`;
-        else if (i.type === 'audio') preview = `<audio controls preload="none" src="${i.data}"></audio>`;
-        else if (i.type === 'image') preview = `<img src="${i.data}">` + (i.caption ? `<div class="body">${esc(i.caption)}</div>` : '');
-        else if (i.type === 'video') preview = `<video src="${i.data}" controls preload="metadata"></video>` + (i.caption ? `<div class="body">${esc(i.caption)}</div>` : '');
-        else preview = `<div class="body">📎 ${esc(i.filename || 'arquivo')}</div>` + (i.caption ? `<div class="body">${esc(i.caption)}</div>` : '');
-        const meta = [ZF.typeLabel(i.type)];
-        if (i.type === 'audio') meta.push(ZF.fmtDuration(i.duration));
-        if (i.data) meta.push(dataUrlSizeKb(i.data) + ' KB');
-        h += `<div class="card" data-search="${esc(ZF.normalizeText([i.name, i.text, i.caption, i.shortcut].join(' ')))}">
-          <h3>${ZF.typeIcon(i.type)} ${esc(i.name)} ${i.shortcut ? `<span class="tag">/${esc(i.shortcut)}</span>` : ''}</h3>
-          <div class="meta">${meta.join(' · ')}</div>${preview}
+        else if (i.type === 'document') preview = `<div class="body">📎 ${esc(i.filename || 'arquivo')}</div>`;
+        else preview = mediaPreview(i);
+        if (i.caption) preview += `<div class="body">${esc(i.caption)}</div>`;
+        h += `<div class="card" data-row="${i.id}" data-search="${srch(i)}">
+          <h3><span class="grip" title="Arraste para mudar a ordem">⋮⋮</span>${ZF.typeIcon(i.type)} ${esc(i.name)} ${i.shortcut ? `<span class="tag">/${esc(i.shortcut)}</span>` : ''}${ftag(i)}</h3>
+          <div class="meta">${metaOf(i)}</div>${preview}
           <div class="actions"><button class="btn sm sec" data-up="${i.id}" title="Mover para cima">↑</button><button class="btn sm sec" data-down="${i.id}" title="Mover para baixo">↓</button>
           <button class="btn sm sec" data-edit="${i.id}">Editar</button>
+          <button class="btn sm sec" data-fold="${i.id}" title="Mover para pasta">📁</button>
           <button class="btn sm sec" data-dup="${i.id}">Duplicar</button>
           <button class="btn sm red" data-del="${i.id}">Excluir</button></div></div>`;
       });
       h += '</div>';
     }
     $('#main').innerHTML = h;
-    $('#newItem').onclick = () => editItem(null, info.newType);
+    $('#newItem').onclick = () => editItem(null, filter === 'media' && mediaSub !== 'all' ? mediaSub : info.newType);
     const q = $('#q');
     if (q) q.oninput = () => {
       const v = ZF.normalizeText(q.value);
-      $$('#grid .card').forEach((c) => (c.style.display = c.dataset.search.includes(v) ? '' : 'none'));
+      $$('#grid [data-search]').forEach((c) => (c.style.display = c.dataset.search.includes(v) ? '' : 'none'));
     };
+    bindViewToggle(renderItems);
+    bindFolderChips(renderItems);
+    $$('[data-fold]').forEach((b) => (b.onclick = () => moveToFolder('items', b.dataset.fold, renderItems)));
+    bindPreviews($('#main'));
     $$('[data-edit]').forEach((b) => (b.onclick = () => editItem(DB.items.find((i) => i.id === b.dataset.edit))));
-    const inGroup = (x) => info.types.includes(x.type);
-    $$('[data-up]').forEach((b) => (b.onclick = async () => { await moveIn('items', b.dataset.up, -1, inGroup); renderItems(); }));
-    $$('[data-down]').forEach((b) => (b.onclick = async () => { await moveIn('items', b.dataset.down, 1, inGroup); renderItems(); }));
+    $$('[data-ms]').forEach((b) => (b.onclick = () => { mediaSub = b.dataset.ms; renderItems(); }));
+    const inGroup = (x) => shownTypes.includes(x.type) && folderMatch(x, curFolder);
+    if ($('#grid')) makeSortable($('#grid'), (id, target, after) => reorder('items', id, target, after, inGroup, renderItems));
+    $$('[data-top]').forEach((b) => (b.onclick = () => moveEdge('items', b.dataset.top, true, inGroup, renderItems)));
+    $$('[data-up]').forEach((b) => (b.onclick = () => moveIn('items', b.dataset.up, -1, inGroup, renderItems)));
+    $$('[data-down]').forEach((b) => (b.onclick = () => moveIn('items', b.dataset.down, 1, inGroup, renderItems)));
     $$('[data-dup]').forEach((b) => (b.onclick = async () => {
       const src = DB.items.find((i) => i.id === b.dataset.dup);
-      DB.items.push(Object.assign({}, src, { id: ZF.uid(), name: src.name + ' (cópia)', shortcut: '' }));
+      DB.items.splice(DB.items.indexOf(src) + 1, 0, Object.assign({}, src, { id: ZF.uid(), name: src.name + ' (cópia)', shortcut: '' }));
       await persist('items');
       renderItems();
     }));
     $$('[data-del]').forEach((b) => (b.onclick = async () => {
       const it = DB.items.find((i) => i.id === b.dataset.del);
       const used = DB.funnels.filter((f) => f.steps.some((s) => s.itemId === it.id)).map((f) => f.name);
-      if (!confirm('Excluir "' + it.name + '"?' + (used.length ? '\n\nEle é usado nos funis: ' + used.join(', ') + ' (essas etapas serão puladas).' : ''))) return;
-      DB.items = DB.items.filter((i) => i.id !== it.id);
-      await persist('items');
-      renderItems();
+      await removeWithUndo('items', it.id, it.name, { warn: used.length ? 'usado em: ' + used.join(', ') + ' (essas etapas serão puladas)' : '' });
     }));
   }
 
@@ -265,6 +553,7 @@
     openModal(`<h2>${isNew ? 'Novo item' : 'Editar item'}</h2>${typeSel}
       <div class="row2"><div><label>Nome</label><input type="text" id="fName" value="${esc(item.name)}" placeholder="Ex: Boas-vindas"></div>
       <div><label>Atalho (opcional)</label><input type="text" id="fShort" value="${esc(item.shortcut || '')}" placeholder="ex: oi"><div class="hint">No WhatsApp digite /atalho e aperte Tab</div></div></div>
+      <div class="row2">${folderField(isNew ? null : item.folder || '')}<div></div></div>
       <div id="fBody"></div>
       <div class="modal-foot"><button class="btn sec" id="cancel">Cancelar</button><button class="btn" id="saveItem">Salvar</button></div>`);
     if (isNew) $('#fType').value = item.type;
@@ -274,7 +563,7 @@
       const t = item.type;
       let h = '';
       if (t === 'text') {
-        h = `<label>Mensagem</label><textarea id="fText" placeholder="{Saudacao}, {primeiro_nome}! Tudo bem?">${esc(item.text || '')}</textarea>${VAR_BTNS}
+        h = `<label>Mensagem</label><textarea id="fText" placeholder="{Saudacao}, {primeiro_nome}! Tudo bem?">${esc(item.text || '')}</textarea>${varBtns()}
           <div class="hint">Formatação do WhatsApp funciona: *negrito*, _itálico_, ~riscado~.</div>`;
       } else {
         const accept = { audio: 'audio/*,.ogg,.opus,.mp3,.m4a,.wav', image: 'image/*', video: 'video/*', document: '*/*' }[t];
@@ -284,7 +573,7 @@
           h += `<div class="rec" id="recBox"><button class="btn sec" id="recBtn" type="button">🎙️ Gravar agora</button><span id="recInfo" class="hint"></span></div>
             <label class="inline"><input type="checkbox" id="fAsFile" ${item.asFile ? 'checked' : ''}> Enviar como arquivo de música (não como áudio de voz)</label>`;
         } else {
-          h += `<label>Legenda (opcional)</label><textarea id="fCaption" style="min-height:70px">${esc(item.caption || '')}</textarea>${VAR_BTNS}`;
+          h += `<label>Legenda (opcional)</label><textarea id="fCaption" style="min-height:70px">${esc(item.caption || '')}</textarea>${varBtns()}`;
           if (t === 'image' || t === 'video') h += `<label class="inline"><input type="checkbox" id="fViewOnce" ${item.viewOnce ? 'checked' : ''}> Visualização única</label>`;
         }
         h += `<div id="fPlayer" style="margin-top:8px"></div>`;
@@ -340,6 +629,9 @@
     $('#saveItem').onclick = async () => {
       item.name = $('#fName').value.trim();
       item.shortcut = $('#fShort').value.trim().replace(/^\//, '').replace(/\s+/g, '');
+      const fold = $('#fFolder').value.trim().slice(0, 40);
+      if (fold) item.folder = fold;
+      else delete item.folder;
       if (!item.name) return toast('Dê um nome ao item');
       if (item.shortcut) {
         const dupe = DB.items.concat(DB.funnels).find((x) => x.id !== item.id && x.shortcut && ZF.normalizeText(x.shortcut) === ZF.normalizeText(item.shortcut));
@@ -362,7 +654,7 @@
       try {
         await persist('items');
       } catch (e) {
-        return toast('Erro ao salvar: ' + e.message);
+        return toast(/context invalidated/i.test(e.message) ? 'A extensão foi atualizada: recarregue esta página (F5) e salve de novo.' : 'Erro ao salvar: ' + e.message);
       }
       closeModal();
       toast('Salvo!');
@@ -418,32 +710,50 @@
     let total = 0;
     f.steps.forEach((st) => {
       if (st.kind === 'wait_reply') return;
-      total += Number(st.delay) || 0;
+      // o intervalo já inclui o "digitando/gravando"; sem intervalo, conta só a simulação
+      const delay = Number(st.delay) || 0;
       const it = DB.items.find((i) => i.id === st.itemId);
-      if (!it || st.simulate === false) return;
-      if (it.type === 'text') total += Math.min(s.typingMax, Math.max(s.typingMin, (it.text || '').length / s.typingCps));
-      else if (it.type === 'audio') total += Math.min(s.recordingMax, Math.max(2, (it.duration || 5) * s.recordingFactor));
-      else total += 1.5;
+      let sim = 0;
+      if (it && st.simulate !== false) {
+        if (it.type === 'text') sim = Math.min(s.typingMax, Math.max(s.typingMin, (it.text || '').length / s.typingCps));
+        else if (it.type === 'audio') sim = Math.min(s.recordingMax, Math.max(2, (it.duration || 5) * s.recordingFactor));
+        else sim = 1.5;
+      }
+      total += delay || sim;
     });
     return total;
   }
   function renderFunnels() {
-    let h = `<h1>Funis</h1><p class="sub">Sequências de mensagens, áudios e mídias com intervalos, digitação/gravação simulada e espera pela resposta do lead. No painel ⚡ os funis aparecem primeiro, nesta ordem (↑↓).</p>
-      <div class="bar"><span class="grow"></span><button class="btn" id="newF">+ Novo funil</button></div>`;
-    if (!DB.funnels.length) h += `<div class="empty">Nenhum funil ainda.</div>`;
+    let h = `<h1>Funis</h1><p class="sub">Sequências de mensagens, áudios e mídias com intervalos, digitação/gravação simulada e espera pela resposta do lead. No painel ⚡ e na barra do WhatsApp os funis aparecem primeiro, nesta ordem — arraste pelo ⋮⋮ ou use ↑ ↓.</p>
+      <div class="bar"><input type="search" id="q" placeholder="Buscar funil…" style="max-width:320px">${viewToggle()}<span class="grow"></span><button class="btn" id="newF">+ Novo funil</button></div>${folderChips(DB.funnels)}`;
+    const shownF = DB.funnels.filter((f) => folderMatch(f, curFolder));
+    const fsrch = (f) => esc(ZF.normalizeText([f.name, f.shortcut, f.folder].concat(f.steps.map((st) => ((DB.items.find((x) => x.id === st.itemId) || {}).name || ''))).join(' ')));
+    if (!shownF.length) h += `<div class="empty">${DB.funnels.length ? 'Nenhum funil nesta pasta.' : 'Nenhum funil ainda.'}</div>`;
     else {
-      h += '<div class="grid">';
-      DB.funnels.forEach((f) => {
+      h += `<div class="${listMode ? 'list' : 'grid'}" id="fgrid">`;
+      shownF.forEach((f, n) => {
         const steps = f.steps.map((s, i) => {
-          if (s.kind === 'wait_reply') return `${i + 1}. ⏳ Aguardar resposta`;
+          if (s.kind === 'wait_reply') {
+            const lbl = (v) => (!v || v === 'continue' ? 'continua' : v === 'stop' ? 'para' : '→ ' + esc(targetName(...v.split(/:(.*)/s).slice(0, 2))));
+            return `${i + 1}. ⏳ Aguardar resposta${s.timeoutMin ? ' (' + s.timeoutMin + ' min)' : ''} · respondeu: ${lbl(s.onReply)} · não respondeu: ${lbl(s.onTimeout)}`;
+          }
           const it = DB.items.find((x) => x.id === s.itemId);
           return `${i + 1}. ${s.delay ? '⏱ ' + fmtDelay(s.delay) + ' → ' : ''}${it ? ZF.typeIcon(it.type) + ' ' + esc(it.name) : '<i>(item apagado)</i>'}`;
         });
-        h += `<div class="card"><h3>🔁 ${esc(f.name)} ${f.shortcut ? `<span class="tag">/${esc(f.shortcut)}</span>` : ''}</h3>
+        if (listMode) {
+          const icons = f.steps.map((st) => (st.kind === 'wait_reply' ? '⏳' : ZF.typeIcon((DB.items.find((x) => x.id === st.itemId) || {}).type || 'text'))).join('');
+          h += `<div class="lrow card" data-row="${f.id}" data-search="${fsrch(f)}"><span class="grip" title="Arraste para mudar a ordem">⋮⋮</span><span class="lnum">${n + 1}</span><span class="licon">🔁</span>
+            <div class="lmain"><div class="lname">${esc(f.name)} ${f.shortcut ? `<span class="tag">/${esc(f.shortcut)}</span>` : ''}${ftag(f)}</div><div class="lsub">${f.steps.length} etapa(s) · ~${fmtTotal(funnelTime(f))} · ${icons}</div></div>
+            <div class="lact"><button class="btn sm sec" data-top="${f.id}" title="Mandar para o topo">⤒</button><button class="btn sm sec" data-up="${f.id}" title="Subir">↑</button><button class="btn sm sec" data-down="${f.id}" title="Descer">↓</button>
+            <button class="btn sm sec" data-edit="${f.id}">Editar</button><button class="btn sm sec" data-fold="${f.id}" title="Mover para pasta">📁</button><button class="btn sm sec" data-dup="${f.id}" title="Duplicar">⧉</button><button class="btn sm red" data-del="${f.id}" title="Excluir">✕</button></div></div>`;
+          return;
+        }
+        h += `<div class="card" data-row="${f.id}" data-search="${fsrch(f)}"><h3><span class="grip" title="Arraste para mudar a ordem">⋮⋮</span>🔁 ${esc(f.name)} ${f.shortcut ? `<span class="tag">/${esc(f.shortcut)}</span>` : ''}${ftag(f)}</h3>
           <div class="meta">${f.steps.length} etapa(s) · ~${fmtTotal(funnelTime(f))} do início ao fim</div>
           <div class="body">${steps.join('<br>')}</div>
           <div class="actions"><button class="btn sm sec" data-up="${f.id}" title="Mover para cima">↑</button><button class="btn sm sec" data-down="${f.id}" title="Mover para baixo">↓</button>
           <button class="btn sm sec" data-edit="${f.id}">Editar</button>
+          <button class="btn sm sec" data-fold="${f.id}" title="Mover para pasta">📁</button>
           <button class="btn sm sec" data-dup="${f.id}">Duplicar</button>
           <button class="btn sm red" data-del="${f.id}">Excluir</button></div></div>`;
       });
@@ -452,20 +762,29 @@
     $('#main').innerHTML = h;
     $('#newF').onclick = () => editFunnel(null);
     $$('[data-edit]').forEach((b) => (b.onclick = () => editFunnel(DB.funnels.find((f) => f.id === b.dataset.edit))));
-    $$('[data-up]').forEach((b) => (b.onclick = async () => { await moveIn('funnels', b.dataset.up, -1, () => true); renderFunnels(); }));
-    $$('[data-down]').forEach((b) => (b.onclick = async () => { await moveIn('funnels', b.dataset.down, 1, () => true); renderFunnels(); }));
+    bindViewToggle(renderFunnels);
+    bindFolderChips(renderFunnels);
+    const q = $('#q');
+    if (q) q.oninput = () => {
+      const v = ZF.normalizeText(q.value);
+      $$('#fgrid [data-search]').forEach((c) => (c.style.display = c.dataset.search.includes(v) ? '' : 'none'));
+    };
+    const inG = (x) => folderMatch(x, curFolder);
+    $$('[data-fold]').forEach((b) => (b.onclick = () => moveToFolder('funnels', b.dataset.fold, renderFunnels)));
+    if ($('#fgrid')) makeSortable($('#fgrid'), (id, target, after) => reorder('funnels', id, target, after, inG, renderFunnels));
+    $$('[data-top]').forEach((b) => (b.onclick = () => moveEdge('funnels', b.dataset.top, true, inG, renderFunnels)));
+    $$('[data-up]').forEach((b) => (b.onclick = () => moveIn('funnels', b.dataset.up, -1, inG, renderFunnels)));
+    $$('[data-down]').forEach((b) => (b.onclick = () => moveIn('funnels', b.dataset.down, 1, inG, renderFunnels)));
     $$('[data-dup]').forEach((b) => (b.onclick = async () => {
       const f = DB.funnels.find((x) => x.id === b.dataset.dup);
-      DB.funnels.push(JSON.parse(JSON.stringify(Object.assign({}, f, { id: ZF.uid(), name: f.name + ' (cópia)', shortcut: '' }))));
+      DB.funnels.splice(DB.funnels.indexOf(f) + 1, 0, JSON.parse(JSON.stringify(Object.assign({}, f, { id: ZF.uid(), name: f.name + ' (cópia)', shortcut: '' }))));
       await persist('funnels');
       renderFunnels();
     }));
     $$('[data-del]').forEach((b) => (b.onclick = async () => {
       const f = DB.funnels.find((x) => x.id === b.dataset.del);
-      if (!confirm('Excluir o funil "' + f.name + '"?')) return;
-      DB.funnels = DB.funnels.filter((x) => x.id !== f.id);
-      await persist('funnels');
-      renderFunnels();
+      const usedBy = DB.remarketing.filter((r) => (r.triggers || []).includes('funnel:' + f.id) || r.stages.some((x) => x.targetType === 'funnel' && x.targetId === f.id)).length + DB.triggers.filter((t) => t.targetType === 'funnel' && t.targetId === f.id).length;
+      await removeWithUndo('funnels', f.id, f.name, { warn: usedBy ? 'usado em ' + usedBy + ' regra(s)/gatilho(s)' : '' });
     }));
   }
 
@@ -476,17 +795,26 @@
     openModal(`<h2>${isNew ? 'Novo funil' : 'Editar funil'}</h2>
       <div class="row2"><div><label>Nome</label><input type="text" id="fName" value="${esc(f.name)}" placeholder="Ex: Funil de boas-vindas"></div>
       <div><label>Atalho (opcional)</label><input type="text" id="fShort" value="${esc(f.shortcut || '')}"></div></div>
+      <div class="row2">${folderField(isNew ? null : f.folder || '')}<div></div></div>
       <label>Etapas</label><div id="steps"></div>
       <div class="bar"><button class="btn sec sm" id="addStep">+ Adicionar envio</button><button class="btn sec sm" id="addWait">+ Aguardar resposta do lead</button></div>
-      <div class="hint">"Esperar" = quanto tempo esperar antes de mandar essa etapa (em segundos, minutos ou horas). A digitação/gravação simulada acontece depois da espera.</div>
+      <div class="hint">"Esperar" = tempo total entre a mensagem anterior e esta (o "digitando/gravando" acontece dentro desse tempo). "Aguardar resposta" pode seguir um caminho se o lead responder e outro se não responder.</div>
       <div class="modal-foot"><button class="btn sec" id="cancel">Cancelar</button><button class="btn" id="saveF">Salvar</button></div>`);
-    const itemOpts = (sel) => DB.items.map((i) => `<option value="${i.id}" ${i.id === sel ? 'selected' : ''}>${ZF.typeIcon(i.type)} ${esc(i.name)}</option>`).join('');
+    // com pastas, a lista de itens vem agrupada por pasta
+    const itemOpts = (sel) => {
+      const opt = (i) => `<option value="${i.id}" ${i.id === sel ? 'selected' : ''}>${ZF.typeIcon(i.type)} ${esc(i.name)}</option>`;
+      const fl = ZF.folders(DB.items);
+      if (!fl.length) return DB.items.map(opt).join('');
+      return fl.map((fo) => `<optgroup label="📁 ${esc(fo)}">${DB.items.filter((i) => folderOf(i) === fo).map(opt).join('')}</optgroup>`).join('')
+        + (DB.items.some((i) => !folderOf(i)) ? `<optgroup label="Sem pasta">${DB.items.filter((i) => !folderOf(i)).map(opt).join('')}</optgroup>` : '');
+    };
     const collect = () => {
       $$('#steps .step').forEach((row, i) => {
         const st = f.steps[i];
         if (st.kind === 'wait_reply') {
           st.timeoutMin = Number($('.tmo', row).value) || 0;
           st.onTimeout = $('.ont', row).value;
+          st.onReply = $('.onr', row).value;
         } else {
           st.itemId = $('.it', row).value;
           st.delayUnit = $('.du', row).value;
@@ -500,9 +828,15 @@
       f.steps.forEach((st, i) => {
         const row = document.createElement('div');
         row.className = 'step';
+        row.dataset.row = String(i);
         if (st.kind === 'wait_reply') {
-          row.innerHTML = `<span class="num">${i + 1}</span> ⏳ Aguardar resposta por até <input type="number" class="tmo" min="0" value="${st.timeoutMin || 0}"> min (0 = sem limite). Se não responder:
-            <select class="ont" style="flex:0;min-width:120px"><option value="continue" ${st.onTimeout !== 'stop' ? 'selected' : ''}>continuar</option><option value="stop" ${st.onTimeout === 'stop' ? 'selected' : ''}>parar funil</option></select>`;
+          const branchOpts = (cur, base) => base + DB.funnels.filter((x) => x.id !== f.id).map((x) => `<option value="funnel:${x.id}" ${cur === 'funnel:' + x.id ? 'selected' : ''}>enviar 🔁 ${esc(x.name)} (e parar)</option>`).join('')
+            + DB.items.map((x) => `<option value="item:${x.id}" ${cur === 'item:' + x.id ? 'selected' : ''}>enviar ${ZF.typeIcon(x.type)} ${esc(x.name)} (e parar)</option>`).join('');
+          const onR = st.onReply || 'continue', onT = st.onTimeout || 'continue';
+          row.innerHTML = `<span class="num">${i + 1}</span><div style="flex:1;display:grid;gap:6px">
+            <div>⏳ <b>Aguardar resposta</b> por até <input type="number" class="tmo" min="0" value="${st.timeoutMin || 0}" style="width:80px"> min <span class="hint">(0 = sem limite)</span></div>
+            <div>✅ Se responder: <select class="onr" style="min-width:200px">${branchOpts(onR, `<option value="continue" ${onR === 'continue' ? 'selected' : ''}>continuar o funil</option><option value="stop" ${onR === 'stop' ? 'selected' : ''}>parar o funil</option>`)}</select></div>
+            <div>⌛ Se não responder: <select class="ont" style="min-width:200px">${branchOpts(onT, `<option value="continue" ${onT === 'continue' ? 'selected' : ''}>continuar o funil</option><option value="stop" ${onT === 'stop' ? 'selected' : ''}>parar o funil</option>`)}</select></div></div>`;
         } else {
           const u = st.delayUnit && UNIT[st.delayUnit] ? st.delayUnit : 's';
           const shown = +((st.delay || 0) / UNIT[u]).toFixed(2);
@@ -523,7 +857,21 @@
           draw();
         };
         row.appendChild(ctr);
+        const grip = document.createElement('span');
+        grip.className = 'grip';
+        grip.title = 'Arraste para mudar a ordem';
+        grip.textContent = '⋮⋮';
+        row.prepend(grip);
         $('#steps').appendChild(row);
+      });
+      makeSortable($('#steps'), (from, to, after) => {
+        collect();
+        const a = Number(from), b = Number(to);
+        const [mv] = f.steps.splice(a, 1);
+        let t = b > a ? b - 1 : b;
+        if (after) t++;
+        f.steps.splice(t, 0, mv);
+        draw();
       });
     };
     draw();
@@ -534,7 +882,7 @@
     };
     $('#addWait').onclick = () => {
       collect();
-      f.steps.push({ kind: 'wait_reply', timeoutMin: 0, onTimeout: 'continue' });
+      f.steps.push({ kind: 'wait_reply', timeoutMin: 0, onTimeout: 'continue', onReply: 'continue' });
       draw();
     };
     $('#cancel').onclick = closeModal;
@@ -542,6 +890,9 @@
       collect();
       f.name = $('#fName').value.trim();
       f.shortcut = $('#fShort').value.trim().replace(/^\//, '').replace(/\s+/g, '');
+      const fold = $('#fFolder').value.trim().slice(0, 40);
+      if (fold) f.folder = fold;
+      else delete f.folder;
       if (!f.name) return toast('Dê um nome ao funil');
       if (!f.steps.some((s) => s.kind !== 'wait_reply')) return toast('Adicione pelo menos um envio');
       if (f.shortcut) {
@@ -562,6 +913,7 @@
   // ------------------------------------------------------------ REMARKETING
   const RM_MODE = {
     no_reply: { label: 'Se não responder', desc: 'Depois do funil, se o lead não responder em X tempo, envia a etapa 1. Se continuar sem responder, etapa 2… Respondeu = para tudo.' },
+    on_reply: { label: 'Se responder', desc: 'Depois do funil, quando o lead responder, envia a etapa 1 (X tempo depois da resposta dele). Se ele responder de novo, envia a etapa 2… Se ele não responder dentro do prazo, encerra.' },
     inactive: { label: 'Conversa parou', desc: 'Para conversas que esfriaram: se a última mensagem foi sua e o lead sumiu por X tempo, envia. Se ele responder, o relógio zera e espera você responder de novo.' }
   };
   const RM_STATUS = {
@@ -608,7 +960,7 @@
         const total = r ? r.stages.length : '?';
         const s = RM_STATUS[e.status] || [e.status, ''];
         let next = '-';
-        if (e.status === 'waiting') next = e.dueAt ? fmtDate(e.dueAt) : (e.mode === 'inactive' ? 'esperando você responder o lead' : '-');
+        if (e.status === 'waiting') next = e.dueAt ? fmtDate(e.dueAt) : (e.mode === 'inactive' ? 'esperando você responder o lead' : e.mode === 'on_reply' ? 'esperando o lead responder' + (e.expireAt ? ' (até ' + fmtDate(e.expireAt) + ')' : '') : '-');
         if (r && !r.enabled && e.status === 'waiting') next += ' (regra pausada)';
         h += `<tr><td><b>${esc(e.name || '')}</b> <span class="hint">${esc(e.chatId.replace(/@.*/, ''))}</span></td><td>${esc(r ? r.name : '(apagada)')}</td>
           <td>${Math.min(e.stageIdx + (e.status === 'done' ? 0 : 1), total)}/${total}</td><td>${next}</td>
@@ -644,11 +996,17 @@
     $$('[data-del]').forEach((b) => (b.onclick = async () => {
       const r = DB.remarketing.find((x) => x.id === b.dataset.del);
       const n = active.filter((e) => e.ruleId === r.id).length;
-      if (!confirm('Excluir a regra "' + r.name + '"?' + (n ? '\n\n' + n + ' contato(s) na fila dela serão cancelados.' : ''))) return;
-      DB.remarketing = DB.remarketing.filter((x) => x.id !== r.id);
-      await persist('remarketing');
-      await updateQueue((qq) => qq.map((e) => (e.ruleId === r.id && (e.status === 'waiting' || e.status === 'sending') ? Object.assign({}, e, { status: 'cancelled', reason: 'regra apagada', endedAt: Date.now() }) : e)));
-      renderRemarketing();
+      const before = {};
+      await removeWithUndo('remarketing', r.id, r.name, {
+        warn: n ? n + ' contato(s) da fila cancelados' : '',
+        after: () => updateQueue((qq) => qq.map((e) => {
+          if (e.ruleId !== r.id || e.status !== 'waiting') return e;
+          before[e.id] = e;
+          return Object.assign({}, e, { status: 'cancelled', reason: 'regra apagada', endedAt: Date.now() });
+        })),
+        // desfazer: quem foi cancelado por causa da exclusão volta para a fila como estava
+        undo: () => updateQueue((qq) => qq.map((e) => (before[e.id] && e.status === 'cancelled' && e.reason === 'regra apagada' ? before[e.id] : e)))
+      });
     }));
   }
   // lê a fila mais recente antes de alterar (a aba do WhatsApp também mexe nela)
@@ -685,6 +1043,7 @@
         <label class="inline"><input type="checkbox" id="rManual" ${r.stopOnManual !== false ? 'checked' : ''}> Parar se eu mandar mensagem manualmente para o lead</label><br>
         <label class="inline"><input type="checkbox" id="rOther" ${r.stopOnOtherFunnel !== false ? 'checked' : ''}> Parar se eu enviar outro funil para o lead</label><br>
         <label class="inline" id="rRestartBox"><input type="checkbox" id="rRestart" ${r.restartOnReply !== false ? 'checked' : ''}> Quando o lead responder, recomeçar da etapa 1</label>
+        <div id="rReplyBox" style="margin-top:6px">Se o lead não responder em até <input type="number" id="rRw" min="0" value="${r.replyWindowHours == null ? 72 : r.replyWindowHours}" style="width:80px"> horas, encerrar <span class="hint">(0 = esperar para sempre)</span></div>
         <div style="margin-top:8px"><label class="inline"><input type="checkbox" id="rWin" ${w.enabled ? 'checked' : ''}> Só enviar no horário:</label>
           <input type="text" id="rWs" value="${esc(w.start)}" style="width:70px"> até <input type="text" id="rWe" value="${esc(w.end)}" style="width:70px">
           <div style="margin-top:6px">${dayNames.map((d, i) => `<label class="inline"><input type="checkbox" class="wd" value="${i}" ${(w.days || []).map(Number).includes(i) ? 'checked' : ''}> ${d}</label>`).join('')}</div>
@@ -698,12 +1057,15 @@
       const m = $('#rMode').value;
       $('#rModeDesc').textContent = RM_MODE[m].desc;
       $('#rRestartBox').style.display = m === 'inactive' ? '' : 'none';
+      $('#rReplyBox').style.display = m === 'on_reply' ? '' : 'none';
       $('#rStageHint').textContent = m === 'inactive'
         ? 'Cada tempo conta a partir da sua última mensagem sem resposta.'
-        : 'Etapa 1: tempo depois do funil. Demais etapas: tempo depois da etapa anterior. Só envia se o lead não respondeu.';
+        : m === 'on_reply'
+          ? 'Cada tempo conta a partir da resposta do lead (da última mensagem dele). Etapa 2 só depois de uma nova resposta.'
+          : 'Etapa 1: tempo depois do funil. Demais etapas: tempo depois da etapa anterior. Só envia se o lead não respondeu.';
+      $$('#rStages .lead').forEach((x) => (x.textContent = m === 'on_reply' ? 'Lead respondeu → esperar' : 'Sem resposta por'));
     };
     $('#rMode').onchange = syncMode;
-    syncMode();
     const collect = () => {
       $$('#rStages .step').forEach((row, i) => {
         const st = r.stages[i];
@@ -718,7 +1080,7 @@
         const u = st.delayUnit && UNIT[st.delayUnit] ? st.delayUnit : 'h';
         const row = document.createElement('div');
         row.className = 'step';
-        row.innerHTML = `<span class="num">${i + 1}</span> Sem resposta por <input type="number" class="dl" min="0" step="any" value="${+((st.delay || 0) / UNIT[u]).toFixed(2)}">
+        row.innerHTML = `<span class="num">${i + 1}</span> <span class="lead">${$('#rMode') && $('#rMode').value === 'on_reply' ? 'Lead respondeu → esperar' : 'Sem resposta por'}</span> <input type="number" class="dl" min="0" step="any" value="${+((st.delay || 0) / UNIT[u]).toFixed(2)}">
           <select class="du" style="flex:0;min-width:95px">${Object.entries(ZF.UNIT_LABEL).map(([k, l]) => `<option value="${k}" ${k === u ? 'selected' : ''}>${l}</option>`).join('')}</select> → enviar
           <select class="tg"><option value="">— escolha —</option>${targetOptions(st.targetType, st.targetId)}</select>`;
         const ctr = document.createElement('span');
@@ -737,7 +1099,8 @@
       });
     };
     draw();
-    $('#rAdd').onclick = () => { collect(); r.stages.push({ delay: 86400, delayUnit: 'd', targetType: '', targetId: '' }); draw(); };
+    syncMode();
+    $('#rAdd').onclick = () => { collect(); r.stages.push($('#rMode').value === 'on_reply' ? { delay: 30, delayUnit: 's', targetType: '', targetId: '' } : { delay: 86400, delayUnit: 'd', targetType: '', targetId: '' }); draw(); };
     $('#cancel').onclick = closeModal;
     $('#saveR').onclick = async () => {
       collect();
@@ -748,8 +1111,10 @@
       if (!r.stages.length) return toast('Adicione pelo menos uma etapa');
       const bad = r.stages.findIndex((x) => !x.targetId);
       if (bad >= 0) return toast('Escolha o que enviar na etapa ' + (bad + 1));
-      const zero = r.stages.findIndex((x) => x.delay < 60);
-      if (zero >= 0) return toast('Etapa ' + (zero + 1) + ': use pelo menos 1 minuto de espera');
+      const minDelay = r.mode === 'on_reply' ? 5 : 60;
+      const zero = r.stages.findIndex((x) => x.delay < minDelay);
+      if (zero >= 0) return toast('Etapa ' + (zero + 1) + ': use pelo menos ' + (r.mode === 'on_reply' ? '5 segundos' : '1 minuto') + ' de espera');
+      r.replyWindowHours = Math.max(0, Number($('#rRw').value) || 0);
       r.stopOnManual = $('#rManual').checked;
       r.stopOnOtherFunnel = $('#rOther').checked;
       r.restartOnReply = $('#rRestart').checked;
@@ -770,7 +1135,8 @@
         if (e.stageIdx >= r.stages.length) return Object.assign({}, e, { status: 'done', reason: 'regra encurtada', endedAt: Date.now(), dueAt: null });
         const st = r.stages[e.stageIdx];
         const n = Object.assign({}, e, { mode: r.mode });
-        n.dueAt = r.mode === 'inactive' && !e.lastFromMe ? null : e.baseAt + st.delay * 1000;
+        if (r.mode === 'on_reply' && e.mode !== 'on_reply') { n.gotReply = false; n.expireAt = r.replyWindowHours > 0 ? Date.now() + r.replyWindowHours * 3600000 : null; }
+        n.dueAt = (r.mode === 'inactive' && !e.lastFromMe) || (r.mode === 'on_reply' && !n.gotReply) ? null : e.baseAt + st.delay * 1000;
         return n;
       }));
       closeModal();
@@ -809,10 +1175,8 @@
     }));
     $$('[data-edit]').forEach((b) => (b.onclick = () => editTrigger(DB.triggers.find((t) => t.id === b.dataset.edit))));
     $$('[data-del]').forEach((b) => (b.onclick = async () => {
-      if (!confirm('Excluir gatilho?')) return;
-      DB.triggers = DB.triggers.filter((t) => t.id !== b.dataset.del);
-      await persist('triggers');
-      renderTriggers();
+      const t = DB.triggers.find((x) => x.id === b.dataset.del);
+      await removeWithUndo('triggers', t.id, t.name || 'gatilho');
     }));
   }
   function editTrigger(t) {
@@ -898,10 +1262,8 @@
     $$('[data-pause]').forEach((b) => (b.onclick = () => setSch(b.dataset.pause, 'paused')));
     $$('[data-resume]').forEach((b) => (b.onclick = () => setSch(b.dataset.resume, 'pending')));
     $$('[data-del]').forEach((b) => (b.onclick = async () => {
-      if (!confirm('Excluir agendamento?')) return;
-      DB.schedules = DB.schedules.filter((s) => s.id !== b.dataset.del);
-      await persist('schedules');
-      renderSchedules();
+      const sc = DB.schedules.find((x) => x.id === b.dataset.del);
+      await removeWithUndo('schedules', sc.id, 'agendamento de ' + fmtDate(sc.at));
     }));
   }
   function editSchedule(s) {
@@ -996,10 +1358,9 @@
       a.click();
     }));
     $$('[data-del]').forEach((b) => (b.onclick = async () => {
-      if (!confirm('Excluir campanha?')) return;
-      DB.campaigns = DB.campaigns.filter((c) => c.id !== b.dataset.del);
-      await persist('campaigns');
-      renderCampaigns();
+      const c = DB.campaigns.find((x) => x.id === b.dataset.del);
+      if (c.status === 'running') return toast('Pause a campanha antes de excluir');
+      await removeWithUndo('campaigns', c.id, c.name);
     }));
   }
   function editCampaign(c) {
@@ -1108,6 +1469,174 @@
     if ($('#mLogout')) $('#mLogout').onclick = async () => { await bgMsg({ type: 'remote:logout' }); renderMobile(); };
   }
 
+  // ------------------------------------------------------------ BUSCA GERAL (⌘K / Ctrl+K)
+  let gq = '';
+  let beforeSearch = null;
+  function renderSearch() {
+    const q = ZF.normalizeText(gq).trim();
+    const hit = (...parts) => ZF.normalizeText(parts.join(' ')).includes(q);
+    const itemName = (id) => (DB.items.find((x) => x.id === id) || {}).name || '';
+    const groups = [];
+    if (q) {
+      const its = DB.items.filter((i) => hit(i.name, i.text, i.caption, i.shortcut, i.folder, i.filename, ZF.typeLabel(i.type)));
+      if (its.length) groups.push(['💬 Mensagens, áudios e mídias', its.map((i) => ({ icon: ZF.typeIcon(i.type), name: i.name, sub: (i.shortcut ? '/' + i.shortcut + ' · ' : '') + (folderOf(i) ? '📁 ' + folderOf(i) + ' · ' : '') + (i.type === 'text' ? (i.text || '').slice(0, 90) : ZF.typeLabel(i.type) + (i.caption ? ' · ' + i.caption.slice(0, 60) : '')), act: 'item:' + i.id }))]);
+      const fs = DB.funnels.filter((f) => hit(f.name, f.shortcut, f.folder, f.steps.map((st) => itemName(st.itemId)).join(' ')));
+      if (fs.length) groups.push(['🔁 Funis', fs.map((f) => ({ icon: '🔁', name: f.name, sub: (f.shortcut ? '/' + f.shortcut + ' · ' : '') + (folderOf(f) ? '📁 ' + folderOf(f) + ' · ' : '') + f.steps.length + ' etapa(s)', act: 'funnel:' + f.id }))]);
+      const rs = DB.remarketing.filter((r) => hit(r.name, r.stages.map((x) => targetName(x.targetType, x.targetId)).join(' ')));
+      if (rs.length) groups.push(['🔔 Remarketing', rs.map((r) => ({ icon: '🔔', name: r.name, sub: RM_MODE[r.mode || 'no_reply'].label + ' · ' + r.stages.length + ' etapa(s)' + (r.enabled ? '' : ' · pausada'), act: 'rmkt:' + r.id }))]);
+      const ts = DB.triggers.filter((t) => hit(t.name, (t.keywords || []).join(' '), targetName(t.targetType, t.targetId)));
+      if (ts.length) groups.push(['🎯 Gatilhos', ts.map((t) => ({ icon: '🎯', name: t.name || (t.keywords || []).join(', '), sub: (MATCH[t.match] || '') + ' ' + (t.keywords || []).join(', ') + ' → ' + targetName(t.targetType, t.targetId), act: 'trig:' + t.id }))]);
+      const ss = DB.schedules.filter((x) => hit(x.numbers.join(' '), x.useName, targetName(x.targetType, x.targetId)));
+      if (ss.length) groups.push(['⏰ Agendamentos', ss.map((x) => ({ icon: '⏰', name: fmtDate(x.at) + ' → ' + targetName(x.targetType, x.targetId), sub: x.numbers.slice(0, 3).join(', '), act: 'sch:' + x.id }))]);
+      const cs = DB.campaigns.filter((c) => hit(c.name, targetName(c.targetType, c.targetId)));
+      if (cs.length) groups.push(['🚀 Campanhas', cs.map((c) => ({ icon: '🚀', name: c.name, sub: (c.progress || 0) + '/' + c.contacts.length + ' · ' + targetName(c.targetType, c.targetId), act: 'camp:' + c.id }))]);
+      const contacts = new Map();
+      (DB.rmktQueue || []).forEach((e) => { if (hit(e.name, e.chatId)) contacts.set(e.chatId, { name: e.name, n: (contacts.get(e.chatId) || {}).n + 1 || 1 }); });
+      if (contacts.size) groups.push(['👤 Contatos no remarketing', Array.from(contacts.entries()).slice(0, 30).map(([id, c]) => ({ icon: '👤', name: c.name || id.replace(/@.*/, ''), sub: id.replace(/@.*/, '') + ' · ' + c.n + ' registro(s)', act: 'view:remarketing' }))]);
+    }
+    const total = groups.reduce((a, g) => a + g[1].length, 0);
+    let h = `<h1>Buscar</h1><p class="sub">${q ? total + ' resultado(s) para <b>' + esc(gq) + '</b>' : 'Digite no campo 🔎 à esquerda. Busca em mensagens, funis, remarketing, gatilhos, agendamentos, campanhas e contatos.'}</p>`;
+    if (q && !total) h += '<div class="empty">Nada encontrado.</div>';
+    groups.forEach(([title, rows]) => {
+      h += `<div class="srch-group">${title} (${rows.length})</div><div class="list">`;
+      rows.forEach((r) => {
+        h += `<div class="lrow card" style="cursor:pointer" data-go="${esc(r.act)}"><span class="licon">${r.icon}</span><div class="lmain"><div class="lname">${esc(r.name)}</div><div class="lsub">${esc(r.sub)}</div></div><div class="lact"><button class="btn sm sec" type="button">Abrir</button></div></div>`;
+      });
+      h += '</div>';
+    });
+    $('#main').innerHTML = h;
+    $$('[data-go]').forEach((row) => (row.onclick = () => {
+      const [k, id] = row.dataset.go.split(/:(.*)/s);
+      // vai para a tela certa e abre o editor (ao salvar, você continua nela)
+      leaveSearch();
+      if (k === 'item') {
+        const it = DB.items.find((x) => x.id === id);
+        if (!it) return;
+        if (!folderMatch(it, curFolder)) curFolder = '';
+        setView('items', it.type === 'image' || it.type === 'video' ? 'media' : it.type);
+        return editItem(it);
+      }
+      if (k === 'funnel') {
+        const f = DB.funnels.find((x) => x.id === id);
+        if (f && !folderMatch(f, curFolder)) curFolder = '';
+        setView('funnels');
+        return f && editFunnel(f);
+      }
+      if (k === 'rmkt') { setView('remarketing'); return editRemarketing(DB.remarketing.find((x) => x.id === id)); }
+      if (k === 'trig') { setView('triggers'); return editTrigger(DB.triggers.find((x) => x.id === id)); }
+      if (k === 'sch') { setView('schedules'); return editSchedule(DB.schedules.find((x) => x.id === id)); }
+      if (k === 'camp') return setView('campaigns');
+      if (k === 'view') return setView(id);
+    }));
+  }
+  function leaveSearch() {
+    gq = '';
+    $('#gsearch').value = '';
+  }
+  $('#gsearch').addEventListener('input', () => {
+    gq = $('#gsearch').value;
+    if (gq.trim()) {
+      if (view !== 'search') beforeSearch = [view, filter];
+      view = 'search';
+      $$('#nav a').forEach((a) => a.classList.remove('on'));
+      renderSearch();
+    } else if (view === 'search') {
+      const b = beforeSearch || ['items', filter];
+      setView(b[0], b[1]);
+    }
+  });
+  $('#gsearch').addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { leaveSearch(); $('#gsearch').dispatchEvent(new Event('input')); $('#gsearch').blur(); }
+    if (e.key === 'Enter') { const first = $('[data-go]'); if (first) first.click(); }
+  });
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      $('#gsearch').focus();
+      $('#gsearch').select();
+    }
+  });
+  // clicar no menu sai da busca
+  $$('#nav a').forEach((a) => a.addEventListener('click', () => { if (gq) leaveSearch(); }, true));
+
+  // ------------------------------------------------------------ RELATÓRIO
+  let repDays = (() => { try { return Number(localStorage.getItem('zfRepDays')) || 30; } catch (e) { return 30; } })();
+  const SRC_LABEL = { manual: '👆 Manual (você clicou)', gatilho: '🎯 Gatilhos', remarketing: '🔔 Remarketing', agendamento: '⏰ Agendamentos', campanha: '🚀 Campanhas', celular: '📱 Pelo celular' };
+  function repDaysList(n) {
+    const out = [];
+    const now = new Date();
+    for (let i = n - 1; i >= 0; i--) out.push(ZF.dayKey(new Date(now.getFullYear(), now.getMonth(), now.getDate() - i, 12).getTime()));
+    return out;
+  }
+  function repAggregate(keys) {
+    const st = DB.stats || {};
+    const a = { ok: 0, fail: 0, cancel: 0, msgs: 0, replied: 0, optout: 0, src: {}, top: {}, types: {}, chats: new Set(), perDay: [] };
+    keys.forEach((k) => {
+      const d = st[k] || {};
+      ['ok', 'fail', 'cancel', 'msgs', 'replied', 'optout'].forEach((f) => (a[f] += d[f] || 0));
+      ['src', 'top', 'types'].forEach((f) => Object.entries(d[f] || {}).forEach(([x, n]) => (a[f][x] = (a[f][x] || 0) + n)));
+      (d.chats || []).forEach((c) => a.chats.add(c));
+      a.perDay.push({ k, ok: d.ok || 0, fail: d.fail || 0, msgs: d.msgs || 0, chats: (d.chats || []).length, replied: d.replied || 0 });
+    });
+    return a;
+  }
+  function renderReport() {
+    const keys = repDaysList(repDays);
+    const a = repAggregate(keys);
+    const prev = repAggregate(repDaysList(repDays * 2).slice(0, repDays));
+    const since = Object.keys(DB.stats || {}).filter((k) => /^\d{4}-/.test(k)).sort()[0];
+    const pct = (x, y) => (y ? Math.round((x / y) * 100) + '%' : '–');
+    const diff = (cur, old) => (old ? (cur >= old ? '▲ ' : '▼ ') + Math.abs(Math.round(((cur - old) / old) * 100)) + '% vs período anterior' : '');
+    const fmtD = (k) => k.slice(8, 10) + '/' + k.slice(5, 7);
+    const rm = a.src.remarketing || 0;
+    let h = `<h1>Relatório</h1><p class="sub">O que a ZapFunil enviou por você. ${since ? 'Contando desde ' + fmtD(since) + '/' + since.slice(0, 4) + '.' : 'Começa a contar a partir de agora.'} Funis e mensagens soltas contam como “envios”; cada mensagem/áudio/mídia dentro deles conta em “mensagens”.</p>
+      <div class="bar"><div class="seg" style="margin-left:0">${[7, 30, 90].map((n) => `<button type="button" data-rd="${n}" class="${repDays === n ? 'on' : ''}">${n} dias</button>`).join('')}<button type="button" data-rd="1" class="${repDays === 1 ? 'on' : ''}">Hoje</button></div>
+      <span class="grow"></span><button class="btn sec sm" id="repCsv">Exportar CSV</button></div>
+      <div class="kpis">
+        <div class="kpi"><span>Envios concluídos</span><b>${a.ok}</b><small>${diff(a.ok, prev.ok)}</small></div>
+        <div class="kpi"><span>Mensagens enviadas</span><b>${a.msgs}</b><small>${diff(a.msgs, prev.msgs)}</small></div>
+        <div class="kpi"><span>Contatos alcançados</span><b>${a.chats.size}</b><small>${diff(a.chats.size, prev.chats.size)}</small></div>
+        <div class="kpi"><span>Responderam ao remarketing</span><b>${a.replied}</b><small>${rm ? pct(a.replied, rm) + ' de ' + rm + ' envios de rmkt' : ''}</small></div>
+        <div class="kpi"><span>Falhas</span><b style="${a.fail ? 'color:var(--red)' : ''}">${a.fail}</b><small>${a.ok + a.fail ? pct(a.fail, a.ok + a.fail) + ' dos envios' : ''}${a.cancel ? ' · ' + a.cancel + ' cancelado(s)' : ''}</small></div>
+        <div class="kpi"><span>Pediram pra sair</span><b>${a.optout}</b><small>descadastro do remarketing</small></div>
+      </div>`;
+    if (repDays > 1) {
+      const max = Math.max(1, ...a.perDay.map((d) => d.ok + d.fail));
+      h += `<div class="section"><h3>Envios por dia</h3><div class="chart">${a.perDay.map((d) => `<div class="col" title="${fmtD(d.k)}: ${d.ok} envio(s), ${d.msgs} mensagem(ns), ${d.chats} contato(s)${d.fail ? ', ' + d.fail + ' falha(s)' : ''}${d.replied ? ', ' + d.replied + ' resposta(s) no rmkt' : ''}"><i class="f" style="height:${(d.fail / max) * 100}%"></i><i style="height:${(d.ok / max) * 100}%"></i></div>`).join('')}</div>
+        <div class="chart-x"><span>${fmtD(keys[0])}</span><span>${fmtD(keys[Math.floor(keys.length / 2)])}</span><span>hoje</span></div><div class="hint">Passe o mouse nas barras para ver o dia. Vermelho = falhas.</div></div>`;
+    }
+    const hbars = (obj, label, limit) => {
+      const rows = Object.entries(obj).sort((x, y) => y[1] - x[1]).slice(0, limit || 10);
+      if (!rows.length) return '<div class="hint">Nada ainda.</div>';
+      const max = rows[0][1] || 1;
+      return rows.map(([k, n]) => `<div class="hbar"><span class="l" title="${esc(label(k))}">${esc(label(k))}</span><span class="t"><i style="width:${(n / max) * 100}%"></i></span><span class="n">${n}</span></div>`).join('');
+    };
+    h += `<div class="rep2"><div class="section"><h3>De onde vieram os envios</h3>${hbars(a.src, (k) => SRC_LABEL[k] || k)}</div>
+      <div class="section"><h3>Tipos de mensagem</h3>${hbars(a.types, (k) => ZF.typeIcon(k) + ' ' + ZF.typeLabel(k))}</div></div>
+      <div class="section"><h3>Mais enviados</h3>${hbars(a.top, (k) => k, 12)}</div>`;
+    const camps = DB.campaigns.filter((c) => c.sent || c.failed);
+    if (camps.length) h += `<div class="section"><h3>Campanhas (total)</h3><table><tr><th>Campanha</th><th>Enviados</th><th>Falhas</th><th>Status</th></tr>${camps.map((c) => `<tr><td>${esc(c.name)}</td><td>${c.sent || 0}</td><td>${c.failed || 0}</td><td>${statusTag(c.status)}</td></tr>`).join('')}</table></div>`;
+    const q = DB.rmktQueue || [];
+    h += `<div class="section"><h3>Remarketing agora</h3><p class="hint">👥 ${q.filter((e) => e.status === 'waiting' || e.status === 'sending').length} na fila · ✅ ${q.filter((e) => e.status === 'replied').length} responderam · ${q.filter((e) => e.status === 'done').length} concluíram · ${Object.keys(DB.rmktBlock || {}).length} descadastrados (contagem da fila atual)</p></div>`;
+    $('#main').innerHTML = h;
+    $$('[data-rd]').forEach((b) => (b.onclick = () => {
+      repDays = Number(b.dataset.rd);
+      try { localStorage.setItem('zfRepDays', String(repDays)); } catch (e) {}
+      renderReport();
+    }));
+    $('#repCsv').onclick = () => {
+      const all = repDaysList(Math.max(repDays, 1));
+      const rows = [['dia', 'envios', 'mensagens', 'contatos', 'falhas', 'cancelados', 'respostas_rmkt', 'descadastros']].concat(all.map((k) => {
+        const d = (DB.stats || {})[k] || {};
+        return [k, d.ok || 0, d.msgs || 0, (d.chats || []).length, d.fail || 0, d.cancel || 0, d.replied || 0, d.optout || 0];
+      }));
+      const a2 = document.createElement('a');
+      a2.href = URL.createObjectURL(new Blob(['﻿' + rows.map((r) => r.join(';')).join('\n')], { type: 'text/csv' }));
+      a2.download = 'zapfunil-relatorio-' + ZF.dayKey() + '.csv';
+      a2.click();
+    };
+  }
+
   // ------------------------------------------------------------ HISTÓRICO
   function renderHistory() {
     let h = `<h1>Histórico</h1><p class="sub">Últimos 500 envios (manuais, gatilhos, agendamentos e campanhas).</p>
@@ -1133,6 +1662,7 @@
   // ------------------------------------------------------------ CONFIGURAÇÕES
   function renderSettings() {
     const s = DB.settings;
+    const ab = Object.assign({}, ZF.DEFAULT_SETTINGS.autoBackup, s.autoBackup || {});
     $('#main').innerHTML = `<h1>Configurações</h1><p class="sub">Ajuste a simulação humana e faça backup dos seus dados.</p>
       <div class="section" style="${s.automationsPaused ? 'background:var(--yel-soft)' : ''}"><h3>${s.automationsPaused ? '⏸ Automações PAUSADAS' : '▶ Automações LIGADAS'}</h3>
         <p class="hint">Liga/desliga de uma vez gatilhos, remarketing, agendamentos e campanhas. Envio manual pelo painel ⚡ continua funcionando. Também dá pra trocar pelo botão "Auto" no WhatsApp.</p>
@@ -1153,30 +1683,72 @@
         <label>Se o lead mandar uma destas (separe por vírgula), ele sai de todos os remarketings e não entra mais</label>
         <input type="text" id="sOpt" value="${esc(s.optOutWords || '')}">
         <div class="hint">${Object.keys(DB.rmktBlock || {}).length} contato(s) descadastrado(s). <a href="#" id="clrBlock">Liberar todos</a></div></div>
+      <div class="section"><h3>🔀 Variações de mensagem</h3>
+        <p class="hint">Escreva <b>{oi}</b> numa mensagem e, a cada envio, sai uma das opções abaixo (ex.: "Opa", "Olá"…). Com a primeira letra maiúscula, <b>{Oi}</b>, a opção sai com letra maiúscula. Deixa as mensagens diferentes umas das outras.</p>
+        <div id="varList"></div>
+        <button class="btn sec" id="varAdd" type="button">+ Nova variação</button></div>
+      <div class="section"><h3>🧰 Painel</h3>
+        <div class="row2"><div><label>Tempo para desfazer exclusão (segundos)</label><input type="number" id="sUndo" min="0" max="60" value="${undoSecs()}"><div class="hint">Depois de excluir aparece "↶ Desfazer". 0 = volta a pedir confirmação antes de excluir.</div></div>
+        <div><label>Relatório guarda (dias)</label><input type="number" id="sStatsDays" min="7" max="730" value="${s.statsDays || 120}"></div></div></div>
       <button class="btn" id="saveSet">Salvar configurações</button>
       <div class="section" style="margin-top:16px"><h3>💾 Backup</h3>
-        <p class="hint">Exporta tudo (mensagens, áudios, mídias, funis, remarketing, gatilhos, agendamentos e campanhas) num arquivo .json. Use para levar para outro computador.</p>
+        <p class="hint">Exporta tudo (mensagens, áudios, mídias, funis, remarketing, gatilhos, agendamentos, campanhas e relatório) num arquivo .json. Use para levar para outro computador.</p>
         <div class="bar"><button class="btn sec" id="exp">Exportar backup</button>
-        <label class="btn sec" style="margin:0">Importar backup<input type="file" id="imp" accept=".json" hidden></label></div></div>
+        <label class="btn sec" style="margin:0">Importar backup<input type="file" id="imp" accept=".json" hidden></label></div>
+        <h3 style="margin-top:18px">🔄 Backup automático</h3>
+        <p class="hint">Salva sozinho em <b>Downloads/ZapFunil-backups</b> (com o Chrome aberto). Apaga os mais antigos e mantém só os últimos que você escolher.</p>
+        <label class="inline"><input type="checkbox" id="abOn" ${ab.enabled ? 'checked' : ''}> Ligado</label>
+        <div class="row3"><div><label>A cada</label><select id="abEvery">${[[1, 'todo dia'], [3, '3 dias'], [7, 'semana'], [14, '2 semanas'], [30, 'mês']].map(([v, t]) => `<option value="${v}" ${Number(ab.everyDays) === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+        <div><label>Manter os últimos</label><input type="number" id="abKeep" min="1" max="30" value="${ab.keep}"></div>
+        <div><label>Mídias</label><select id="abMedia"><option value="1" ${ab.includeMedia ? 'selected' : ''}>com áudios/vídeos/imagens</option><option value="0" ${ab.includeMedia ? '' : 'selected'}>sem mídias (arquivo leve)</option></select></div></div>
+        <div class="bar" style="margin-top:10px"><button class="btn sec" id="abNow">Fazer backup agora</button><span class="hint" id="abInfo"></span></div></div>
       <div class="section"><h3>ℹ️ Como usar</h3><div class="hint" style="font-size:13px;line-height:1.6">
         1. Crie mensagens, áudios, mídias e documentos.<br>2. Monte funis juntando os itens com intervalos.<br>
         3. No WhatsApp Web, clique no botão ⚡ (canto inferior direito), abra uma conversa e clique no item/funil.<br>
         4. Atalho rápido: na caixa de mensagem digite <b>/atalho</b> e aperte <b>Tab</b>.<br>
         5. Gatilhos, agendamentos e campanhas rodam sozinhos enquanto o WhatsApp Web estiver aberto.<br>
-        Variáveis: {nome} {primeiro_nome} {Saudacao} {saudacao} {data} {hora} e texto aleatório {opção1|opção2}.</div></div>`;
+        Variáveis: {nome} {primeiro_nome} {Saudacao} {saudacao} {data} {hora}, suas variações 🔀 ({oi}, {show}…) e texto aleatório direto na mensagem {opção1|opção2}.</div></div>`;
+    // ----- variações
+    let vars = JSON.parse(JSON.stringify(s.variations || []));
+    const drawVars = () => {
+      $('#varList').innerHTML = vars.map((v, i) => `<div class="row2 varrow" data-i="${i}" style="align-items:end;margin-bottom:10px">
+          <div><label>Nome (use na mensagem)</label><input type="text" class="vk" value="${esc(v.key)}" placeholder="ex: oi"></div>
+          <div><label>Opções (uma por linha)</label><textarea class="vo" style="min-height:64px">${esc((v.options || []).join('\n'))}</textarea></div>
+          <div style="grid-column:1/-1;display:flex;gap:10px;align-items:center"><span class="hint vp">Exemplo: ${esc(ZF.applyVars('{' + v.key + '}', { name: 'Maria' }))}</span><button type="button" class="btn sec sm vdel" style="margin-left:auto">Apagar</button></div>
+        </div>`).join('') || '<p class="hint">Nenhuma variação. Clique em "+ Nova variação".</p>';
+      $$('#varList .vdel').forEach((b) => (b.onclick = () => { collectVars(); vars.splice(Number(b.closest('.varrow').dataset.i), 1); drawVars(); }));
+    };
+    const collectVars = () => {
+      vars = $$('#varList .varrow').map((r) => ({
+        key: $('.vk', r).value.trim().replace(/^\{|\}$/g, '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, ''),
+        options: $('.vo', r).value.split(/\n|\s*;\s*/).map((x) => x.trim()).filter(Boolean)
+      }));
+    };
+    drawVars();
+    $('#varAdd').onclick = () => { collectVars(); vars.push({ key: '', options: [] }); drawVars(); const r = $$('#varList .varrow').pop(); if (r) $('.vk', r).focus(); };
     $('#saveSet').onclick = async () => {
+      collectVars();
+      const reserved = ['nome', 'primeiro_nome', 'saudacao', 'data', 'hora', 'numero'];
+      const keys = vars.map((v) => v.key);
+      const bad = vars.find((v) => !v.key || !v.options.length || reserved.includes(v.key) || keys.indexOf(v.key) !== keys.lastIndexOf(v.key));
+      if (bad) return toast(!bad.key ? 'Dê um nome para cada variação' : !bad.options.length ? 'A variação {' + bad.key + '} está sem opções' : reserved.includes(bad.key) ? '{' + bad.key + '} já é uma variável do sistema, use outro nome' : 'Nome repetido: {' + bad.key + '}');
       DB.settings = Object.assign({}, DB.settings, {
+        variations: vars,
         typingCps: Math.max(1, Number($('#sCps').value) || 18),
         typingMin: Math.max(0, Number($('#sTmin').value) || 0),
         typingMax: Math.max(1, Number($('#sTmax').value) || 9),
         recordingFactor: Math.max(0.1, Number($('#sRf').value) || 1),
         recordingMax: Math.max(2, Number($('#sRmax').value) || 30),
         optOutWords: $('#sOpt').value,
+        undoSeconds: Math.max(0, Math.min(60, Math.round(Number($('#sUndo').value)) || 0)),
+        statsDays: Math.max(7, Math.min(730, Math.round(Number($('#sStatsDays').value)) || 120)),
         confirmSend: $('#sConfirm').checked,
         suggestOnType: $('#sSuggest').checked
       });
       if (DB.settings.typingMin > DB.settings.typingMax) DB.settings.typingMin = DB.settings.typingMax;
       await persist('settings');
+      ZF.setVariations(DB.settings.variations);
+      drawVars();
       toast('Configurações salvas');
     };
     $('#togAuto').onclick = async () => {
@@ -1191,8 +1763,41 @@
       await reload();
       renderSettings();
     };
+    // backup automático: salva na hora que você muda
+    const abInfo = async () => {
+      const d = await chrome.storage.local.get(['autoBackupInfo']);
+      const i = d.autoBackupInfo || {};
+      const el = $('#abInfo');
+      if (!el) return;
+      let t = i.at ? 'Último: ' + fmtDate(i.at) + (i.size ? ' · ' + (i.size / 1048576).toFixed(1) + ' MB' : '') : 'Nenhum backup automático ainda.';
+      if (i.error && (!i.at || i.errorAt > i.at)) t += ' · ⚠️ último erro: ' + i.error;
+      el.textContent = t;
+    };
+    abInfo();
+    const abSave = async () => {
+      DB.settings = Object.assign({}, DB.settings, { autoBackup: {
+        enabled: $('#abOn').checked,
+        everyDays: Number($('#abEvery').value) || 7,
+        keep: Math.max(1, Math.min(30, Math.round(Number($('#abKeep').value)) || 4)),
+        includeMedia: $('#abMedia').value === '1'
+      } });
+      await persist('settings');
+      toast('Backup automático ' + (DB.settings.autoBackup.enabled ? 'ligado' : 'desligado'));
+    };
+    ['#abOn', '#abEvery', '#abKeep', '#abMedia'].forEach((k) => ($(k).onchange = abSave));
+    $('#abNow').onclick = async () => {
+      const b = $('#abNow');
+      b.disabled = true;
+      b.textContent = 'Salvando…';
+      const r = await bgMsg({ type: 'backup:now' });
+      b.disabled = false;
+      b.textContent = 'Fazer backup agora';
+      if (r && r.ok) toast('Backup salvo em Downloads/ZapFunil-backups ✅');
+      else toast('Não consegui: ' + ((r && r.error) || 'erro'));
+      abInfo();
+    };
     $('#exp').onclick = async () => {
-      const data = await chrome.storage.local.get(['items', 'funnels', 'triggers', 'schedules', 'campaigns', 'settings', 'remarketing', 'rmktBlock']);
+      const data = await chrome.storage.local.get(['items', 'funnels', 'triggers', 'schedules', 'campaigns', 'settings', 'remarketing', 'rmktBlock', 'stats']);
       data.__zapfunil = 1;
       data.exportedAt = new Date().toISOString();
       const a = document.createElement('a');
@@ -1212,6 +1817,15 @@
       if (!data.__zapfunil) return toast('Esse arquivo não é um backup do ZapFunil');
       const replace = confirm('OK = SUBSTITUIR tudo pelo backup\nCancelar = JUNTAR com o que já existe');
       const out = {};
+      // backup "sem mídias": aproveita o áudio/vídeo/imagem que já existe aqui (mesmo id)
+      if (Array.isArray(data.items)) data.items = data.items.map((x) => {
+        if (!x.noMedia) return x;
+        const mine = DB.items.find((y) => y.id === x.id);
+        const c = Object.assign({}, x);
+        delete c.noMedia;
+        if (mine && mine.data) c.data = mine.data;
+        return c;
+      }).filter((x) => x.type === 'text' || x.data);
       for (const k of ['items', 'funnels', 'triggers', 'schedules', 'campaigns', 'remarketing']) {
         const inc = data[k] || [];
         if (replace) out[k] = inc;
@@ -1219,6 +1833,12 @@
           const ids = new Set(DB[k].map((x) => x.id));
           out[k] = DB[k].concat(inc.filter((x) => !ids.has(x.id)));
         }
+      }
+      // relatório: junta os dias (fica com o maior de cada dia)
+      if (data.stats && typeof data.stats === 'object') {
+        const st = replace ? {} : JSON.parse(JSON.stringify(DB.stats || {}));
+        for (const [k, v] of Object.entries(data.stats)) if (!st[k] || (v && (v.ok || 0) > (st[k].ok || 0))) st[k] = v;
+        out.stats = st;
       }
       // campanhas importadas nunca começam rodando
       out.campaigns = out.campaigns.map((c) => (c.status === 'running' ? Object.assign({}, c, { status: 'paused' }) : c));
@@ -1232,18 +1852,30 @@
   }
 
   // ------------------------------------------------------------ início
+  let liveT = null;
   chrome.storage.onChanged.addListener(async (changes, area) => {
     if (area !== 'local') return;
-    const keys = Object.keys(changes).filter((k) => k !== 'engineLock' && k !== 'panelOpen');
-    if (!keys.length) return;
-    await reload();
+    // só as chaves de dados; aplica o valor novo direto (antes recarregava tudo, inclusive todos os vídeos, a cada mudança)
+    const keys = Object.keys(changes).filter((k) => ZF.KEYS.includes(k) && !pending[k]);
+    if (!keys.length || !DB) return;
+    for (const k of keys) {
+      const v = changes[k].newValue;
+      if (k === 'settings') {
+        DB.settings = Object.assign({}, ZF.DEFAULT_SETTINGS, v || {});
+        ZF.setVariations(DB.settings.variations);
+      } else DB[k] = v || (ZF.OBJ_KEYS.includes(k) ? {} : []);
+    }
     // atualiza telas "ao vivo" sem atrapalhar quem está editando
-    if ($('#modal').classList.contains('hidden') && ['campaigns', 'schedules', 'history', 'remarketing'].includes(view) && keys.some((k) => ['campaigns', 'schedules', 'history', 'rmktQueue'].includes(k))) render();
+    if ($('#modal').classList.contains('hidden') && ['campaigns', 'schedules', 'history', 'remarketing', 'report'].includes(view) && keys.some((k) => ['campaigns', 'schedules', 'history', 'rmktQueue', 'stats'].includes(k))) {
+      clearTimeout(liveT);
+      liveT = setTimeout(render, view === 'report' ? 1500 : 0);
+    }
   });
 
   (async () => {
     await reload();
-    const [v, f] = (location.hash.slice(1) || 'items:text').split(':');
+    let [v, f] = (location.hash.slice(1) || 'items:text').split(':');
+    if (v === 'search') v = 'items';
     setView(v || 'items', f || 'text');
     window.addEventListener('hashchange', () => {
       const [v2, f2] = (location.hash.slice(1) || 'items:text').split(':');

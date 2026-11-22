@@ -26,6 +26,18 @@
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  // "data:audio/ogg; codecs=opus;base64,..." → "data:audio/ogg;base64,..."
+  // (o WhatsApp recusa data URL com parâmetros/espaços: erro invalid_data_url)
+  function cleanDataUrl(u) {
+    if (typeof u !== 'string') return u;
+    const m = /^data:([^,]*),/.exec(u);
+    if (!m) return u;
+    const parts = m[1].split(';').map((x) => x.trim()).filter(Boolean);
+    const b64 = parts.some((x) => x.toLowerCase() === 'base64');
+    const type = parts[0] && parts[0].includes('/') ? parts[0].toLowerCase() : 'application/octet-stream';
+    return 'data:' + type + (b64 ? ';base64' : '') + u.slice(m[0].length - 1);
+  }
+
   const LABEL = { image: '📷 Foto', video: '🎬 Vídeo', ptt: '🎤 Áudio', audio: '🎵 Áudio', document: '📄 Documento', sticker: '🌟 Figurinha', location: '📍 Localização', vcard: '👤 Contato', multi_vcard: '👤 Contatos', revoked: '🚫 Mensagem apagada', call_log: '📞 Chamada', ciphertext: '⏳ Aguardando mensagem', poll_creation: '📊 Enquete' };
   function labelOf(m) {
     const base = LABEL[m.type] || '• ' + (m.type || 'mensagem');
@@ -157,7 +169,7 @@
     async sendFile(chatId, dataUrl, opts) {
       const o = Object.assign({ createChat: true }, opts || {});
       if (o.type === 'audio' && o.isPtt) o.waveform = true;
-      const r = await WPP.chat.sendFileMessage(chatId, dataUrl, o);
+      const r = await WPP.chat.sendFileMessage(chatId, cleanDataUrl(dataUrl), o);
       return { id: wid(r && r.id) };
     },
     async listChats() {
@@ -222,7 +234,7 @@
       out.size = blob.size;
       out.data = await new Promise((res, rej) => {
         const fr = new FileReader();
-        fr.onload = () => res(fr.result);
+        fr.onload = () => res(cleanDataUrl(fr.result));
         fr.onerror = () => rej(new Error('Falha ao ler a mídia'));
         fr.readAsDataURL(blob);
       });

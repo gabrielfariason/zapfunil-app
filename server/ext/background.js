@@ -141,3 +141,99 @@ async function remoteCycle(tabs) {
     remoteBusy = false;
   }
 }
+
+// ------------------------------------------------------------ backup automático (vai para Downloads/ZapFunil-backups)
+const BK_KEYS = ['items', 'funnels', 'triggers', 'schedules', 'campaigns', 'settings', 'remarketing', 'rmktBlock', 'stats'];
+const BK_DEF = { enabled: true, everyDays: 7, includeMedia: true, keep: 4 };
+let bkBusy = false;
+async function ensureOffscreen() {
+  if (chrome.offscreen.hasDocument && (await chrome.offscreen.hasDocument())) return;
+  try {
+    await chrome.offscreen.createDocument({ url: 'offscreen.html', reasons: ['BLOBS'], justification: 'Gerar o arquivo do backup automático' });
+  } catch (e) {
+    if (!/single offscreen|already/i.test(e.message || '')) throw e;
+  }
+}
+function waitDownload(id) {
+  return new Promise((resolve) => {
+    const done = (ok, err) => { chrome.downloads.onChanged.removeListener(fn); clearTimeout(t); resolve({ ok, err }); };
+    const fn = (d) => {
+      if (d.id !== id || !d.state) return;
+      if (d.state.current === 'complete') done(true);
+      else if (d.state.current === 'interrupted') done(false, (d.error && d.error.current) || 'interrompido');
+    };
+    const t = setTimeout(() => done(false, 'demorou demais'), 120000);
+    chrome.downloads.onChanged.addListener(fn);
+    chrome.downloads.search({ id }).then((r) => { if (r[0] && r[0].state === 'complete') done(true); }).catch(() => {});
+  });
+}
+async function autoBackup(force) {
+  if (bkBusy) return { ok: false, error: 'já está fazendo um backup' };
+  const d = await chrome.storage.local.get(['settings', 'hostKind', 'autoBackupLast', 'autoBackupIds']);
+  if (d.hostKind === 'server') return { ok: false, error: 'o servidor 24h não faz backup local' };
+  const cfg = Object.assign({}, BK_DEF, (d.settings && d.settings.autoBackup) || {});
+  if (!force) {
+    if (!cfg.enabled) return { ok: false, skipped: true };
+    if (Date.now() - (d.autoBackupLast || 0) < Math.max(1, Number(cfg.everyDays) || 7) * 86400000) return { ok: false, skipped: true };
+  }
+  bkBusy = true;
+  const id = Date.now().toString(36);
+  try {
+    const data = await chrome.storage.local.get(BK_KEYS);
+    if (!force && !(data.items || []).length && !(data.funnels || []).length) return { ok: false, skipped: true };
+    if (!cfg.includeMedia) {
+      data.items = (data.items || []).map((i) => {
+        if (!i.data) return i;
+        const c = Object.assign({}, i);
+        delete c.data;
+        c.noMedia = true;
+        return c;
+      });
+      data.noMedia = true;
+    }
+    data.__zapfunil = 1;
+    data.auto = true;
+    data.exportedAt = new Date().toISOString();
+    const json = JSON.stringify(data);
+    data.items = null; // libera memória
+    await ensureOffscreen();
+    const CH = 4 * 1024 * 1024;
+    for (let i = 0; i < json.length; i += CH) {
+      const r = await chrome.runtime.sendMessage({ target: 'zf-offscreen', type: 'chunk', id, data: json.slice(i, i + CH) });
+      if (!r || !r.ok) throw new Error('falha ao montar o arquivo');
+    }
+    const fin = await chrome.runtime.sendMessage({ target: 'zf-offscreen', type: 'finish', id });
+    if (!fin || !fin.url) throw new Error('falha ao montar o arquivo');
+    const now = new Date();
+    const stamp = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0') + '_' + String(now.getHours()).padStart(2, '0') + 'h' + String(now.getMinutes()).padStart(2, '0');
+    const dlId = await chrome.downloads.download({ url: fin.url, filename: 'ZapFunil-backups/zapfunil-auto-' + stamp + (cfg.includeMedia ? '' : '-sem-midias') + '.json', conflictAction: 'uniquify', saveAs: false });
+    const res = await waitDownload(dlId);
+    chrome.runtime.sendMessage({ target: 'zf-offscreen', type: 'revoke', id }).catch(() => {});
+    if (!res.ok) throw new Error('download ' + res.err);
+    // guarda só os N mais recentes (apaga os antigos que a própria extensão criou)
+    const ids = (d.autoBackupIds || []).concat([dlId]);
+    const keep = Math.max(1, Number(cfg.keep) || 4);
+    while (ids.length > keep) {
+      const old = ids.shift();
+      await chrome.downloads.removeFile(old).catch(() => {});
+      await chrome.downloads.erase({ id: old }).catch(() => {});
+    }
+    const [item] = await chrome.downloads.search({ id: dlId });
+    await chrome.storage.local.set({ autoBackupLast: Date.now(), autoBackupIds: ids, autoBackupInfo: { at: Date.now(), size: fin.size, file: item ? item.filename : '', error: '' } });
+    return { ok: true, size: fin.size, file: item ? item.filename : '' };
+  } catch (e) {
+    await chrome.storage.local.set({ autoBackupInfo: Object.assign({}, (await chrome.storage.local.get('autoBackupInfo')).autoBackupInfo || {}, { error: e.message || String(e), errorAt: Date.now() }) });
+    return { ok: false, error: e.message || String(e) };
+  } finally {
+    bkBusy = false;
+    try { if (await chrome.offscreen.hasDocument()) await chrome.offscreen.closeDocument(); } catch (e) {}
+  }
+}
+chrome.alarms.get('zfBackup').then((a) => { if (!a) chrome.alarms.create('zfBackup', { delayInMinutes: 3, periodInMinutes: 60 }); }).catch(() => {});
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'zfBackup') autoBackup(false).catch(() => {}); });
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.type === 'backup:now') {
+    autoBackup(true).then(sendResponse);
+    return true;
+  }
+});

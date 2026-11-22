@@ -11,6 +11,7 @@
 <body>
   <aside class="side">
     <div class="brand">ZapFunil</div>
+    <input type="search" id="gsearch" class="gsearch" placeholder="🔎 Buscar tudo (⌘K)" autocomplete="off">
     <nav id="nav">
       <a data-view="items" data-filter="text">💬 Mensagens</a>
       <a data-view="items" data-filter="audio">🎤 Áudios</a>
@@ -22,15 +23,17 @@
       <a data-view="schedules">⏰ Agendamentos</a>
       <a data-view="campaigns">🚀 Disparo em massa</a>
       <a data-view="mobile">📱 Celular</a>
+      <a data-view="report">📊 Relatório</a>
       <a data-view="history">📜 Histórico</a>
       <a data-view="settings">⚙️ Configurações</a>
     </nav>
     <button class="btn wa" id="openWa">Abrir WhatsApp Web</button>
-    <div class="side-note">100% local e gratuito. Seus dados ficam só neste navegador.</div>
+    <div class="side-note">100% gratuito. Seus dados ficam neste navegador e, se você conectar o celular, sincronizados na sua conta.</div>
   </aside>
   <main id="main"></main>
   <div id="modal" class="modal hidden"><div class="modal-box" id="modalBox"></div></div>
   <div id="toast" class="toast"></div>
+  <div id="undo" class="undo hidden"></div>
   <script src="lib/lame.min.js"></script>
   <script src="lib/qrcode.js"></script>
   <script src="common.js"></script>
