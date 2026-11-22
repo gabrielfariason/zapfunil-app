@@ -255,7 +255,7 @@ label.l{display:block;font-size:13px;color:var(--mute);margin:14px 0 6px}
 <script src="lame.min.js"></script>
 <script>
 {
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.1.1';
 const SB_URL = 'https://kjntxjencxxauhzulera.supabase.co';
 const SB_KEY = 'sb_publishable_UsD2jKHI97zFRkSHkM87iA_G0KKfrWq';
 const $ = (s, r) => (r || document).querySelector(s);
@@ -410,9 +410,9 @@ function pickRule(target, name) {
   const rules = (S && S.rules) || [];
   const inQ = ((S && S.queue) || []).filter((e) => e.chatId === target);
   sheet(`<h3>Remarketing</h3><p>${esc(name)}</p>
-    ${inQ.length ? `<div class="card" style="margin:0 0 12px">${inQ.map((e) => `<div class="row"><div class="col"><span class="t">${esc(e.rule)}</span><span class="s">etapa ${e.stage}/${e.total} · ${e.dueAt ? 'envia ' + whenFull(e.dueAt) : 'esperando você'}</span></div><button class="btn red sm" data-x="${esc(e.id)}">Parar</button></div>`).join('')}</div>` : ''}
+    ${inQ.length ? `<div class="card" style="margin:0 0 12px">${inQ.map((e) => `<div class="row"><div class="col"><span class="t">${esc(e.rule)}</span><span class="s">etapa ${e.stage}/${e.total} · ${e.dueAt ? 'envia ' + whenFull(e.dueAt) : e.mode === 'on_reply' ? 'esperando o lead responder' : 'esperando você'}</span></div><button class="btn red sm" data-x="${esc(e.id)}">Parar</button></div>`).join('')}</div>` : ''}
     <div class="grp" style="padding:0 0 8px">Colocar em</div>
-    <div class="card" style="margin:0 0 12px">${rules.map((r) => `<button class="row" data-r="${esc(r.id)}"><span class="ic">${svg('bell')}</span><span class="col"><span class="t">${esc(r.name)}${r.enabled ? '' : ' (pausada)'}</span><span class="s">${r.stages} etapa(s) · ${r.mode === 'inactive' ? 'conversa parada' : 'se não responder'}</span></span></button>`).join('') || '<div class="empty">Nenhuma regra criada no painel.</div>'}</div>
+    <div class="card" style="margin:0 0 12px">${rules.map((r) => `<button class="row" data-r="${esc(r.id)}"><span class="ic">${svg('bell')}</span><span class="col"><span class="t">${esc(r.name)}${r.enabled ? '' : ' (pausada)'}</span><span class="s">${r.stages} etapa(s) · ${r.mode === 'inactive' ? 'conversa parada' : r.mode === 'on_reply' ? 'se responder' : 'se não responder'}</span></span></button>`).join('') || '<div class="empty">Nenhuma regra criada no painel.</div>'}</div>
     <button class="btn sec block" id="no">Fechar</button>`, (box) => {
     $('#no', box).onclick = closeSheet;
     $$('[data-r]', box).forEach((b) => (b.onclick = async () => { closeSheet(); try { await command('rmkt_enqueue', { target, name, ruleId: b.dataset.r }, 'Remarketing → ' + name); toast('Colocando no remarketing…'); } catch (e) { toast(e.message); } }));
@@ -490,8 +490,8 @@ document.addEventListener('click', (e) => { const b = e.target.closest('[data-op
 
 function renderRmkt() {
   const qd = (S && S.queue) || [];
-  $('#rmktBody').innerHTML = `<p class="note">Contatos esperando o próximo follow-up. Se o lead responder, sai sozinho.</p>
-    <div class="card">${qd.map((e) => `<div class="row">${avatarHTML({ id: e.chatId, name: e.name }, 40)}<span class="col"><span class="t">${esc(displayName({ id: e.chatId, name: e.name }))}</span><span class="s">${esc(e.rule)} · etapa ${e.stage}/${e.total} · ${e.dueAt ? whenFull(e.dueAt) : 'esperando você'}</span></span><button class="btn red sm" data-x="${esc(e.id)}">Parar</button></div>`).join('') || '<div class="empty">Ninguém em remarketing agora.</div>'}</div>
+  $('#rmktBody').innerHTML = `<p class="note">Contatos esperando o próximo follow-up ("se não responder" sai sozinho quando o lead responde; "se responder" envia quando ele responde).</p>
+    <div class="card">${qd.map((e) => `<div class="row">${avatarHTML({ id: e.chatId, name: e.name }, 40)}<span class="col"><span class="t">${esc(displayName({ id: e.chatId, name: e.name }))}</span><span class="s">${esc(e.rule)} · etapa ${e.stage}/${e.total} · ${e.dueAt ? whenFull(e.dueAt) : e.mode === 'on_reply' ? 'esperando o lead responder' : 'esperando você'}</span></span><button class="btn red sm" data-x="${esc(e.id)}">Parar</button></div>`).join('') || '<div class="empty">Ninguém em remarketing agora.</div>'}</div>
     <div class="grp">Regras</div><div class="card">${((S && S.rules) || []).map((r) => `<div class="row"><span class="ic">${svg('bell')}</span><span class="col"><span class="t">${esc(r.name)}</span><span class="s">${r.enabled ? 'Ativa' : 'Pausada'} · ${r.stages} etapa(s)</span></span></div>`).join('') || '<div class="empty">Crie regras no painel da extensão.</div>'}</div>`;
   $$('#rmktBody [data-x]').forEach((b) => (b.onclick = async () => { b.disabled = true; try { await command('rmkt_cancel', { entryId: b.dataset.x }, 'Parar remarketing'); toast('Parando…'); } catch (e) { toast(e.message); b.disabled = false; } }));
 }
