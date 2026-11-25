@@ -208,7 +208,7 @@
   $('#openWa').addEventListener('click', () => chrome.runtime.sendMessage({ type: 'focusWhatsApp' }));
 
   function render() {
-    const fn = { mobile: renderMobile, items: renderItems, funnels: renderFunnels, remarketing: renderRemarketing, triggers: renderTriggers, schedules: renderSchedules, campaigns: renderCampaigns, report: renderReport, search: renderSearch, history: renderHistory, settings: renderSettings }[view] || renderItems;
+    const fn = { mobile: renderMobile, items: renderItems, funnels: renderFunnels, remarketing: renderRemarketing, triggers: renderTriggers, schedules: renderSchedules, campaigns: renderCampaigns, groups: renderGroups, report: renderReport, search: renderSearch, history: renderHistory, settings: renderSettings }[view] || renderItems;
     fn();
   }
 
@@ -1465,27 +1465,17 @@
     const isNew = !s;
     s = s ? Object.assign({}, s) : { id: ZF.uid(), numbers: [], groups: [], at: Date.now() + 3600000, repeat: 'none', targetType: 'funnel', targetId: '', status: 'pending', useName: '' };
     openModal(`<h2>${isNew ? 'Novo agendamento' : 'Editar agendamento'}</h2>
-      <label>Números (um por linha, com DDD) — opcional se escolher grupos</label><textarea id="sNums" placeholder="11999998888">${esc(s.numbers.join('\n'))}</textarea>
-      <div class="hint">Números brasileiros sem 55 recebem o 55 automaticamente.</div>
-      ${GROUP_BOX_HTML}
+      <label>Números (um por linha, com DDD)</label><textarea id="sNums" placeholder="11999998888">${esc(s.numbers.join('\n'))}</textarea>
+      <div class="hint">Números brasileiros sem 55 recebem o 55 automaticamente. Para grupos, use a aba <b>👥 Grupos</b>.</div>
       <label>Nome para {nome} (opcional – se vazio usa o nome salvo no WhatsApp)</label><input type="text" id="sName" value="${esc(s.useName || '')}">
       <label>Enviar</label><select id="sTarget">${targetOptions(s.targetType, s.targetId)}</select>
       <div class="row2"><div><label>Data e hora</label><input type="datetime-local" id="sAt" value="${toLocalInput(s.at)}"></div>
       <div><label>Repetir</label><select id="sRep"><option value="none">Não repetir</option><option value="daily" ${s.repeat === 'daily' ? 'selected' : ''}>Todo dia</option><option value="weekly" ${s.repeat === 'weekly' ? 'selected' : ''}>Toda semana</option></select></div></div>
-      ${mentionHtml(s.mention)}
       <div class="modal-foot"><button class="btn sec" id="cancel">Cancelar</button><button class="btn" id="saveS">Salvar</button></div>`);
     $('#cancel').onclick = closeModal;
-    const getGroups = groupBox(s.groups);
-    const getMention = bindMention($('#sTarget'));
-    const showM = () => ($('#mBox').style.display = getGroups().length ? '' : 'none');
-    $('#grpBox').addEventListener('change', showM);
-    showM();
     $('#saveS').onclick = async () => {
       s.numbers = parseNumbers($('#sNums').value).map((c) => c.number);
-      s.groups = getGroups();
-      if (!s.numbers.length && !s.groups.length) return toast('Informe um número ou escolha um grupo');
-      s.mention = s.groups.length ? getMention() : null;
-      if (s.mention && s.mention.on && s.mention.at === 'custom' && !s.mention.list.length) return toast('Diga em quais mensagens marcar (ex: 2)');
+      if (!s.numbers.length) return toast('Informe ao menos um número válido');
       Object.assign(s, parseTarget($('#sTarget').value));
       if (!s.targetId) return toast('Escolha o que enviar');
       const at = new Date($('#sAt').value).getTime();
@@ -1502,6 +1492,591 @@
       closeModal();
       toast('Agendado!');
       renderSchedules();
+    };
+  }
+
+  // ------------------------------------------------------------ GRUPOS (aba própria)
+  // Por dentro: gPosts (a mensagem) + gSchedules (para quem/quando). Na tela isso é um "envio".
+  let gTab = (() => { try { const t = localStorage.getItem('zfGTab'); return ['envios', 'grupos', 'auto'].includes(t) ? t : 'envios'; } catch (e) { return 'envios'; } })();
+  let gFilter = 'next';
+  let gWeek = false;
+  const G_TABS = [['envios', '📨 Envios'], ['grupos', '👥 Grupos'], ['auto', '🤖 Automações']];
+  const DAYS = [[1, 'Seg'], [2, 'Ter'], [3, 'Qua'], [4, 'Qui'], [5, 'Sex'], [6, 'Sáb'], [0, 'Dom']];
+  const gid = () => 'g' + ZF.uid();
+  function gUniq(t) {
+    const map = new Map();
+    t = t || {};
+    (t.groups || []).forEach((g) => map.set(g.id, g));
+    (t.lists || []).forEach((lid) => { const l = DB.gLists.find((x) => x.id === lid); (l ? l.groups : []).forEach((g) => map.set(g.id, g)); });
+    return Array.from(map.values());
+  }
+  function gTargetsLabel(t) {
+    t = t || {};
+    if (t.all) return 'Todos os grupos';
+    const parts = (t.lists || []).map((lid) => { const l = DB.gLists.find((x) => x.id === lid); return l ? '📋 ' + l.name : null; }).filter(Boolean)
+      .concat((t.groups || []).map((g) => '👥 ' + (g.name || 'grupo')));
+    if (!parts.length) return '(nenhum grupo)';
+    const n = gUniq(t).length;
+    return (parts.length > 3 ? parts.slice(0, 3).join(', ') + ' +' + (parts.length - 3) : parts.join(', ')) + (n > 1 ? ' · ' + n + ' grupos' : '');
+  }
+  const gHas = (t, groupId) => !!t && (t.all || gUniq(t).some((g) => g.id === groupId));
+  const postOf = (id) => DB.gPosts.find((p) => p.id === id);
+  const postHasMention = (p) => !!(p && (p.parts || []).some((x) => x.mention));
+  function postIcons(p) {
+    return ((p && p.parts) || []).map((x) => {
+      if (x.kind === 'text') return '💬';
+      if (x.kind === 'funnel') return '🔁';
+      const it = DB.items.find((i) => i.id === x.itemId);
+      return it ? ZF.typeIcon(it.type) : '❔';
+    }).join(' ');
+  }
+  function gNext(s, n) {
+    if (!s.enabled) return [];
+    if (s.mode === 'once') return s.doneAt || !s.at ? [] : [s.at];
+    const out = [];
+    const now = Date.now();
+    for (let k = 0; k < 15 && out.length < n; k++) {
+      const d = new Date(now + k * 86400000);
+      if (!(s.days || []).includes(d.getDay())) continue;
+      (s.times || []).slice().sort().forEach((hm) => {
+        const [h, m] = hm.split(':').map(Number);
+        const at = new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, m || 0).getTime();
+        if (at > now) out.push(at);
+      });
+    }
+    return out.sort((a, b) => a - b).slice(0, n);
+  }
+  const WD = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+  const fmtShort = (ts) => { const d = new Date(ts); return WD[d.getDay()] + ' ' + d.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' }) + ' ' + d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }); };
+  function dayLabel(ts) {
+    const d = new Date(ts);
+    const t0 = new Date(); t0.setHours(0, 0, 0, 0);
+    const diff = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - t0) / 86400000);
+    if (diff === 0) return 'hoje';
+    if (diff === 1) return 'amanhã';
+    return WD[d.getDay()] + ' ' + d.getDate();
+  }
+  const hhmm = (ts) => new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  function repeatLabel(s) {
+    if (s.mode === 'once') return s.doneAt ? 'enviado' : 'uma vez';
+    const d = (s.days || []).slice().sort();
+    const dl = d.length === 7 ? 'todo dia' : d.join() === '1,2,3,4,5' ? 'seg a sex' : DAYS.filter(([x]) => d.includes(x)).map((x) => x[1].toLowerCase()).join(', ');
+    return dl + ' · ' + (s.times || []).slice().sort().join(', ');
+  }
+
+  // destino: todos / listas / grupos (um por modal)
+  function targetsHtml(allowAll) {
+    return `${allowAll ? `<label class="inline" style="margin:6px 0 2px"><input type="checkbox" id="tgAll"> <b>Todos os grupos</b> <span class="hint">(em que você está)</span></label>` : ''}
+      <div id="tgPick"><div id="tgListsWrap"><label>📋 Listas de grupos</label><div class="chips" id="tgLists" style="margin:4px 0 2px"></div></div>${GROUP_BOX_HTML}</div>`;
+  }
+  function bindTargets(t, onChange) {
+    t = t || {};
+    let lists = (t.lists || []).filter((id) => DB.gLists.some((l) => l.id === id));
+    const drawLists = () => {
+      $('#tgListsWrap').style.display = DB.gLists.length ? '' : 'none';
+      $('#tgLists').innerHTML = DB.gLists.map((l) => `<button type="button" class="chip ${lists.includes(l.id) ? 'on' : ''}" data-tl="${l.id}">📋 ${esc(l.name)} <span>${l.groups.length}</span></button>`).join('');
+      $$('#tgLists [data-tl]').forEach((b) => (b.onclick = () => {
+        lists = lists.includes(b.dataset.tl) ? lists.filter((x) => x !== b.dataset.tl) : lists.concat(b.dataset.tl);
+        drawLists();
+        if (onChange) onChange();
+      }));
+    };
+    drawLists();
+    const getGroups = groupBox(t.groups || []);
+    if (onChange) $('#grpBox').addEventListener('change', onChange);
+    if ($('#tgAll')) {
+      $('#tgAll').checked = !!t.all;
+      const upd = () => { $('#tgPick').style.display = $('#tgAll').checked ? 'none' : ''; if (onChange) onChange(); };
+      $('#tgAll').onchange = upd;
+      upd();
+    }
+    return () => ({ all: !!($('#tgAll') && $('#tgAll').checked), lists: lists.slice(), groups: getGroups() });
+  }
+  const tgEmpty = (t) => !t.all && !gUniq(t).length;
+
+  // montador de mensagens (texto escrito na hora + acervo, com "@ todos" em cada uma)
+  function msgBuilder(box, parts, opts) {
+    opts = opts || {};
+    parts = JSON.parse(JSON.stringify(parts && parts.length ? parts : [{ kind: 'text', text: '', mention: false, delay: 0 }]));
+    const read = () => {
+      $$('.gpart', box).forEach((row, i) => {
+        const part = parts[i];
+        if (!part) return;
+        part.delay = Math.max(0, Number($('.gp-delay', row).value) || 0);
+        if (part.kind === 'text') part.text = $('.gp-text', row).value;
+        else {
+          const [k, ...rest] = $('select.tg', row).value.split(':');
+          part.kind = k === 'funnel' ? 'funnel' : 'item';
+          if (part.kind === 'funnel') { part.funnelId = rest.join(':'); delete part.itemId; } else { part.itemId = rest.join(':'); delete part.funnelId; }
+        }
+      });
+    };
+    const draw = () => {
+      box.innerHTML = '';
+      const list = document.createElement('div');
+      parts.forEach((part, i) => {
+        const row = document.createElement('div');
+        row.className = 'gpart step';
+        row.innerHTML = `<div class="gp-head"><span class="num">${i + 1}</span>${part.kind === 'text' ? '<b>💬 Texto</b>' : '<b>📦 Do acervo</b>'}<span class="grow"></span>
+          ${opts.noMention ? '' : `<button type="button" class="atbtn ${part.mention ? 'on' : ''}" data-at="${i}" title="Marcar todos do grupo nesta mensagem (oculto: notifica todo mundo sem aparecer @)">@ todos</button>`}
+          ${i ? `<span class="hint">esperar</span><input type="number" class="gp-delay" min="0" value="${part.delay || 0}" title="Segundos antes desta mensagem (o digitando/gravando acontece dentro)"><span class="hint">s</span>` : '<input type="hidden" class="gp-delay" value="0">'}
+          <button type="button" class="btn sm sec" data-up="${i}" title="Subir">↑</button><button type="button" class="btn sm sec" data-dn="${i}" title="Descer">↓</button><button type="button" class="btn sm red" data-rm="${i}" title="Tirar">✕</button></div>
+          ${part.kind === 'text' ? `<textarea class="gp-text" rows="3" placeholder="${esc(opts.placeholder || '{Saudacao}, pessoal! Hoje tem aula às 20h 🚀')}">${esc(part.text || '')}</textarea>` : `<select class="tg"><option value="">— escolha —</option>${targetOptions(part.kind, part.kind === 'funnel' ? part.funnelId : part.itemId)}</select>`}`;
+        list.appendChild(row);
+        if (part.kind !== 'text' && !(part.itemId || part.funnelId)) row.querySelector('select.tg').value = '';
+      });
+      box.appendChild(list);
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      bar.style.margin = '8px 0 0';
+      bar.innerHTML = `<button type="button" class="btn sm sec" data-add="text">+ Texto</button><button type="button" class="btn sm sec" data-add="item">+ Do acervo (áudio, imagem, vídeo, funil…)</button>${opts.saved && DB.gPosts.length ? '<span class="grow"></span><select class="gp-saved" style="max-width:260px"><option value="">↺ Usar envio salvo…</option>' + DB.gPosts.slice().reverse().map((p) => `<option value="${p.id}">${esc(p.name)} (${p.parts.length})</option>`).join('') + '</select>' : ''}`;
+      box.appendChild(bar);
+      $$('[data-at]', box).forEach((b) => (b.onclick = () => { read(); const x = parts[+b.dataset.at]; x.mention = !x.mention; draw(); }));
+      $$('[data-up]', box).forEach((b) => (b.onclick = () => { read(); const i = +b.dataset.up; if (i > 0) { [parts[i - 1], parts[i]] = [parts[i], parts[i - 1]]; draw(); } }));
+      $$('[data-dn]', box).forEach((b) => (b.onclick = () => { read(); const i = +b.dataset.dn; if (i < parts.length - 1) { [parts[i + 1], parts[i]] = [parts[i], parts[i + 1]]; draw(); } }));
+      $$('[data-rm]', box).forEach((b) => (b.onclick = () => { read(); parts.splice(+b.dataset.rm, 1); if (!parts.length) parts.push({ kind: 'text', text: '', mention: false, delay: 0 }); draw(); }));
+      $$('[data-add]', box).forEach((b) => (b.onclick = () => {
+        read();
+        parts.push(b.dataset.add === 'text' ? { kind: 'text', text: '', mention: false, delay: parts.length ? 3 : 0 } : { kind: 'item', itemId: '', mention: false, delay: parts.length ? 3 : 0 });
+        draw();
+        setTimeout(() => { if (b.dataset.add === 'text') { const t = $$('.gp-text', box).pop(); if (t) t.focus(); } else { const k = $$('.gpart .pk-btn', box).pop(); if (k) k.click(); } }, 30);
+      }));
+      const sv = $('.gp-saved', box);
+      if (sv) sv.onchange = () => {
+        const p = postOf(sv.value);
+        if (!p) return;
+        read();
+        const empty = parts.length === 1 && parts[0].kind === 'text' && !String(parts[0].text || '').trim();
+        parts = (empty ? [] : parts).concat(JSON.parse(JSON.stringify(p.parts)));
+        if (opts.onSaved) opts.onSaved(p);
+        draw();
+      };
+    };
+    draw();
+    return {
+      get: () => { read(); return parts.filter((x) => (x.kind === 'text' ? String(x.text || '').trim() : x.itemId || x.funnelId)).map((x, i) => (i === 0 ? Object.assign({}, x, { delay: 0 }) : x)); },
+      firstText: () => { read(); const t = parts.find((x) => x.kind === 'text' && String(x.text || '').trim()); return t ? t.text : ''; }
+    };
+  }
+  // grava a mensagem: reaproveita o mesmo registro se só este envio/automação usa; senão cria outro
+  function savePost(oldId, name, parts, ownerKey) {
+    const used = (id) => DB.gSchedules.filter((s) => s.postId === id).length + (((DB.gAuto || {}).welcome || {}).postId === id ? 1 : 0) + (((DB.gAuto || {}).keywords) || []).filter((k) => k.postId === id).length;
+    const p = oldId && postOf(oldId);
+    if (p && used(oldId) <= (ownerKey ? 1 : 0)) {
+      p.name = name;
+      p.parts = parts;
+      return p.id;
+    }
+    const np = { id: gid(), name, parts };
+    DB.gPosts.push(np);
+    return np.id;
+  }
+  const autoName = (parts, fallback) => {
+    const t = parts.find((x) => x.kind === 'text');
+    if (t) return t.text.replace(/\{[^}]+\}/g, '').replace(/\s+/g, ' ').replace(/^[\s,.!?;:–-]+/, '').trim().slice(0, 40) || fallback;
+    const x = parts[0];
+    return x ? targetName(x.kind === 'funnel' ? 'funnel' : 'item', x.kind === 'funnel' ? x.funnelId : x.itemId).replace(/^\S+\s/, '') : fallback;
+  };
+
+  function renderGroups() {
+    $('#main').innerHTML = `<h1>Grupos</h1><p class="sub">Mande e programe mensagens nos seus grupos, com "@ todos" (oculto) onde quiser. Tudo começa no botão <b>Novo envio</b>.</p>
+      <div class="bar" style="margin:0 0 16px"><div class="seg gtabs" style="margin:0">${G_TABS.map(([k, t]) => `<button type="button" data-gt="${k}" class="${gTab === k ? 'on' : ''}">${t}</button>`).join('')}</div><span class="grow"></span><button class="btn" id="gNew">+ Novo envio</button></div><div id="gBody"></div>`;
+    $$('[data-gt]').forEach((b) => (b.onclick = () => {
+      gTab = b.dataset.gt;
+      try { localStorage.setItem('zfGTab', gTab); } catch (e) {}
+      renderGroups();
+    }));
+    $('#gNew').onclick = () => gWizard(null);
+    ({ envios: gRenderEnvios, grupos: gRenderGrupos, auto: gRenderAuto }[gTab] || gRenderEnvios)($('#gBody'));
+  }
+
+  // ----- Envios
+  function gRow(s, when, sub2) {
+    const p = postOf(s.postId);
+    const last = s.last && !s.last.ok ? `<div class="hint" style="color:var(--red);margin-top:3px" title="${esc(s.last.err || '')}">⚠️ ${esc((s.last.err || 'erro').slice(0, 90))}</div>` : '';
+    return `<div class="erow ${s.enabled ? '' : 'off'}"><div class="ewhen">${when}</div>
+      <div class="lmain"><div class="lname">${esc(p ? p.name : '(mensagem apagada)')} ${postHasMention(p) ? '<span class="atag">@ todos</span>' : ''} ${s.enabled ? '' : '<span class="tag off">Pausado</span>'}</div>
+      <div class="lsub">${postIcons(p)} · ${esc(gTargetsLabel(s.targets))} · ${s.mode === 'once' ? '📌 ' : '🔁 '}${esc(repeatLabel(s))}${sub2 || ''}</div>${last}</div>
+      <div class="lact"><button class="btn sm sec" data-ge="${s.id}">Editar</button><button class="btn sm sec" data-gtog="${s.id}">${s.enabled ? 'Pausar' : 'Retomar'}</button><button class="btn sm sec" data-gdup="${s.id}" title="Duplicar">⧉</button><button class="btn sm red" data-gdel="${s.id}" title="Excluir">✕</button></div></div>`;
+  }
+  function gRenderEnvios(box) {
+    const sch = DB.gSchedules;
+    const hist = (DB.history || []).filter((x) => /@g\.us$/.test(x.chatId || ''));
+    const nRep = sch.filter((s) => s.mode !== 'once').length;
+    let h = `<div class="bar" style="margin:0 0 12px"><div class="chips" style="margin:0">${[['next', 'Próximos'], ['rep', 'Repetindo (' + nRep + ')'], ['sent', 'Enviados']].map(([k, t]) => `<button type="button" class="chip ${gFilter === k ? 'on' : ''}" data-gf="${k}">${t}</button>`).join('')}</div><span class="grow"></span>${gFilter !== 'sent' && nRep ? `<button type="button" class="btn sm sec" id="gWeekBtn">${gWeek ? '☰ Ver como lista' : '📅 Ver como semana'}</button>` : ''}</div>`;
+    if (!sch.length && !hist.length) {
+      h += `<div class="empty"><div style="font-size:30px;margin-bottom:6px">📨</div><b>Nenhum envio ainda</b><br>Clique em <b>+ Novo envio</b>: monte a mensagem, escolha os grupos e diga quando (agora, numa data, ou repetindo na semana).</div>`;
+      box.innerHTML = h;
+      bindEnvios(box);
+      return;
+    }
+    if (gFilter === 'sent') {
+      h += hist.length ? '<div class="elist">' + hist.slice(0, 200).map((x) => `<div class="erow"><div class="ewhen"><b>${hhmm(x.t)}</b><small>${dayLabel(x.t) === 'hoje' ? 'hoje' : new Date(x.t).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' })}</small></div>
+        <div class="lmain"><div class="lname">${esc((x.what || '').replace(/^👥\s*/, ''))}</div><div class="lsub">👥 ${esc(x.name || x.chatId.replace(/@.*/, ''))} · ${esc(String(x.source || '').replace(/^grupo:\s*/, ''))}</div></div>
+        <div class="lact">${x.ok ? '<span class="tag">✅ enviado</span>' : `<span class="tag err" title="${esc(x.err || '')}">❌ ${esc((x.err || 'erro').slice(0, 40))}</span>`}</div></div>`).join('') + '</div>' : '<div class="empty">Nada enviado em grupos ainda.</div>';
+    } else if (gWeek) {
+      const weekly = sch.filter((s) => s.mode !== 'once');
+      h += '<div class="week">';
+      DAYS.forEach(([d, label]) => {
+        const today = new Date().getDay() === d;
+        const slots = [];
+        weekly.forEach((s) => { if ((s.days || []).includes(d)) (s.times || []).forEach((t) => slots.push({ s, t })); });
+        slots.sort((a, b) => a.t.localeCompare(b.t));
+        h += `<div class="wday ${today ? 'today' : ''}"><div class="wd-h">${label}${today ? ' · hoje' : ''}</div>` + (slots.length ? slots.map(({ s, t }) => {
+          const p = postOf(s.postId);
+          return `<button type="button" class="wslot ${s.enabled ? '' : 'off'} ${postHasMention(p) ? 'men' : ''}" data-ge="${s.id}"><b>${t}</b>${postHasMention(p) ? '<span class="at">@</span>' : ''}<span class="wn">${esc(p ? p.name : '(apagada)')}</span><small>${esc(gTargetsLabel(s.targets))}</small></button>`;
+        }).join('') : '<div class="wempty">—</div>') + '</div>';
+      });
+      h += '</div>';
+    } else if (gFilter === 'rep') {
+      const rep = sch.filter((s) => s.mode !== 'once');
+      h += rep.length ? '<div class="elist">' + rep.map((s) => { const nx = gNext(s, 1)[0]; return gRow(s, nx ? `<b>${hhmm(nx)}</b><small>${dayLabel(nx)}</small>` : '<b>—</b><small>pausado</small>'); }).join('') + '</div>' : '<div class="empty">Nenhum envio repetindo. No <b>Novo envio</b>, escolha "Repetir".</div>';
+    } else {
+      // próximos: cada envio uma vez, no próximo horário dele (pausados no fim)
+      const occ = [];
+      sch.forEach((s) => { const t = gNext(s, 1)[0]; if (t) occ.push({ s, t }); });
+      occ.sort((a, b) => a.t - b.t);
+      const paused = sch.filter((s) => !s.enabled);
+      let lastDay = '';
+      h += occ.length ? '<div class="elist">' + occ.slice(0, 80).map(({ s, t }) => {
+        const dl = dayLabel(t);
+        const head = dl !== lastDay ? `<div class="eday">${dl === 'hoje' ? 'Hoje' : dl === 'amanhã' ? 'Amanhã' : fmtShort(t).slice(0, 9)}</div>` : '';
+        lastDay = dl;
+        return head + gRow(s, `<b>${hhmm(t)}</b><small>${dl}</small>`);
+      }).join('') + '</div>' : '<div class="empty">Nada programado. Clique em <b>+ Novo envio</b>.</div>';
+      if (paused.length) h += '<div class="eday" style="margin-top:16px">Pausados</div><div class="elist">' + paused.map((s) => gRow(s, '<b>⏸</b><small>pausado</small>')).join('') + '</div>';
+    }
+    box.innerHTML = h;
+    bindEnvios(box);
+  }
+  function bindEnvios(box) {
+    $$('[data-gf]', box).forEach((b) => (b.onclick = () => { gFilter = b.dataset.gf; renderGroups(); }));
+    if ($('#gWeekBtn')) $('#gWeekBtn').onclick = () => { gWeek = !gWeek; renderGroups(); };
+    bindSchedActions(box);
+  }
+  function bindSchedActions(box) {
+    $$('[data-ge]', box).forEach((b) => (b.onclick = () => gWizard(DB.gSchedules.find((s) => s.id === b.dataset.ge))));
+    $$('[data-gtog]', box).forEach((b) => (b.onclick = async () => {
+      DB.gSchedules = DB.gSchedules.map((s) => (s.id === b.dataset.gtog ? Object.assign({}, s, { enabled: !s.enabled }) : s));
+      render();
+      await persist('gSchedules');
+    }));
+    $$('[data-gdup]', box).forEach((b) => (b.onclick = () => {
+      const s = DB.gSchedules.find((x) => x.id === b.dataset.gdup);
+      const p = postOf(s.postId);
+      gWizard(null, { parts: p ? p.parts : [], name: p ? p.name + ' (cópia)' : '', targets: s.targets, mode: s.mode, days: s.days, times: s.times, at: s.at });
+    }));
+    $$('[data-gdel]', box).forEach((b) => (b.onclick = () => {
+      const s = DB.gSchedules.find((x) => x.id === b.dataset.gdel);
+      const p = postOf(s.postId);
+      removeWithUndo('gSchedules', s.id, p ? p.name : 'envio');
+    }));
+  }
+
+  // ----- Assistente "Novo envio": 1 Mensagem · 2 Grupos · 3 Quando
+  function gWizard(s, preset) {
+    const isNew = !s;
+    preset = preset || {};
+    const p0 = s ? postOf(s.postId) : null;
+    s = s ? JSON.parse(JSON.stringify(s)) : { id: gid(), targets: preset.targets || { lists: [], groups: [] }, mode: preset.mode || 'now', days: preset.days || [1, 2, 3, 4, 5], times: preset.times || ['08:00'], at: preset.at && preset.at > Date.now() ? preset.at : Date.now() + 3600000, enabled: true, lateMin: 120, done: {} };
+    let mode = s.mode === 'once' ? (isNew ? 'now' : 'once') : s.mode === 'week' ? 'week' : 'now';
+    if (!isNew && s.mode === 'once') mode = 'once';
+    let step = 1;
+    openModal(`<h2>${isNew ? 'Novo envio' : 'Editar envio'}</h2>
+      <div class="wsteps"><button type="button" data-ws="1">1 · Mensagem</button><button type="button" data-ws="2">2 · Grupos</button><button type="button" data-ws="3">3 · Quando</button></div>
+      <div data-wp="1"><div id="wMsg"></div><label style="margin-top:12px">Nome (para você achar depois)</label><input type="text" id="wName" value="${esc(p0 ? p0.name : preset.name || '')}" placeholder="automático: o começo do texto">
+        <div class="hint" style="margin-top:6px">Variáveis: {nome}/{grupo} = nome do grupo · {saudacao}, {data}, {hora} e suas variações ({oi}…).</div></div>
+      <div data-wp="2">${targetsHtml(false)}<div class="hint" id="wTgInfo"></div></div>
+      <div data-wp="3"><div class="wmodes">${[['now', '📤', 'Agora'], ['once', '📌', 'Data e hora'], ['week', '🔁', 'Repetir']].map(([k, i, t]) => `<button type="button" data-wm="${k}"><span>${i}</span>${t}</button>`).join('')}</div>
+        <div id="wOnce"><label>Data e hora</label><input type="datetime-local" id="wAt" value="${toLocalInput(s.at)}"></div>
+        <div id="wWeek"><label>Dias</label><div class="chips" id="wDays" style="margin:4px 0 6px">${DAYS.map(([d, l]) => `<button type="button" class="chip" data-day="${d}">${l}</button>`).join('')}
+          <span class="hint" style="align-self:center;margin-left:6px">atalhos:</span><button type="button" class="chip" data-dset="all">Todo dia</button><button type="button" class="chip" data-dset="work">Seg–Sex</button></div>
+          <label>Horários</label><div id="wTimes" class="chips" style="align-items:center"></div></div>
+        <div id="wLateBox"><details style="margin-top:12px"><summary class="hint" style="cursor:pointer">Se o WhatsApp estiver fechado no horário…</summary><label style="margin-top:8px">Enviar com até quantos minutos de atraso</label><input type="number" id="wLate" min="5" max="1440" value="${s.lateMin || 120}" style="max-width:140px"><div class="hint">Depois disso, aquele horário é pulado (para não sair um "bom dia" à tarde).</div></details></div>
+        <div class="wsum" id="wSum"></div></div>
+      <div class="modal-foot"><button class="btn sec" id="wBack">Cancelar</button><span class="grow"></span><button class="btn" id="wNext">Próximo</button></div>`);
+    const mb = msgBuilder($('#wMsg'), p0 ? p0.parts : preset.parts, { saved: true, onSaved: (p) => { if (!$('#wName').value.trim()) $('#wName').value = p.name; } });
+    const getT = bindTargets(s.targets, () => { const n = gUniq(getT ? getT() : {}).length; $('#wTgInfo').textContent = n ? n + ' grupo(s) vão receber' : ''; });
+    let days = (s.days || []).slice();
+    let times = (s.times || []).slice();
+    const tmp = () => ({ mode: mode === 'week' ? 'week' : 'once', days, times, enabled: true, at: mode === 'now' ? Date.now() : new Date($('#wAt').value).getTime() });
+    const summary = () => {
+      const t = getT();
+      const g = gUniq(t).length;
+      const parts = mb.get();
+      const men = parts.filter((x) => x.mention).length;
+      let when = '';
+      if (mode === 'now') when = '<b>agora</b>';
+      else {
+        const nx = gNext(tmp(), 3);
+        when = nx.length ? (mode === 'week' ? '<b>' + esc(repeatLabel(tmp())) + '</b> · próximos: ' + nx.map(fmtShort).join(', ') : '<b>' + fmtShort(nx[0]) + '</b>') : '<span style="color:var(--red)">nenhum horário futuro</span>';
+      }
+      $('#wSum').innerHTML = `<b>${parts.length}</b> mensagem(ns)${men ? ' · <span class="atag">@ todos</span> em ' + men : ''} → <b>${g}</b> grupo(s) · ${when}`;
+    };
+    const drawMode = () => {
+      $$('[data-wm]').forEach((b) => b.classList.toggle('on', b.dataset.wm === mode));
+      $('#wOnce').style.display = mode === 'once' ? '' : 'none';
+      $('#wWeek').style.display = mode === 'week' ? '' : 'none';
+      $('#wLateBox').style.display = mode === 'week' ? '' : 'none';
+      summary();
+      drawFoot();
+    };
+    const drawDays = () => { $$('[data-day]').forEach((b) => b.classList.toggle('on', days.includes(+b.dataset.day))); summary(); };
+    const drawTimes = () => {
+      $('#wTimes').innerHTML = times.map((t, i) => `<span class="tpill"><input type="time" value="${t}" data-ti="${i}"><button type="button" data-tx="${i}" title="Tirar">✕</button></span>`).join('') + '<button type="button" class="chip" id="wAddT">+ horário</button>';
+      $$('[data-ti]').forEach((inp) => (inp.onchange = () => { times[+inp.dataset.ti] = inp.value; summary(); }));
+      $$('[data-tx]').forEach((b) => (b.onclick = () => { times.splice(+b.dataset.tx, 1); drawTimes(); }));
+      $('#wAddT').onclick = () => { times.push(times.length ? times[times.length - 1] : '12:00'); drawTimes(); };
+      summary();
+    };
+    $$('[data-wm]').forEach((b) => (b.onclick = () => { mode = b.dataset.wm; drawMode(); }));
+    $$('[data-day]').forEach((b) => (b.onclick = () => { const d = +b.dataset.day; days = days.includes(d) ? days.filter((x) => x !== d) : days.concat(d); drawDays(); }));
+    $$('[data-dset]').forEach((b) => (b.onclick = () => { days = b.dataset.dset === 'all' ? [0, 1, 2, 3, 4, 5, 6] : [1, 2, 3, 4, 5]; drawDays(); }));
+    $('#wAt').onchange = summary;
+    drawTimes();
+    drawDays();
+    const check = (n) => {
+      if (n >= 1 && !mb.get().length) { toast('Escreva ou escolha pelo menos uma mensagem'); return 1; }
+      if (n >= 2 && tgEmpty(getT())) { toast('Escolha pelo menos um grupo ou lista'); return 2; }
+      return 0;
+    };
+    const go = (n) => {
+      if (n > step) { const bad = check(n - 1); if (bad) n = bad; }
+      step = n;
+      $$('[data-wp]').forEach((x) => (x.style.display = +x.dataset.wp === step ? '' : 'none'));
+      $$('[data-ws]').forEach((x) => { x.classList.toggle('on', +x.dataset.ws === step); x.classList.toggle('done', +x.dataset.ws < step); });
+      if (step === 3) summary();
+      drawFoot();
+    };
+    function drawFoot() {
+      $('#wBack').textContent = step === 1 ? 'Cancelar' : '← Voltar';
+      $('#wNext').textContent = step < 3 ? 'Próximo →' : mode === 'now' ? '📤 Enviar agora' : isNew ? 'Programar' : 'Salvar';
+    }
+    $$('[data-ws]').forEach((b) => (b.onclick = () => go(+b.dataset.ws)));
+    $('#wBack').onclick = () => (step === 1 ? closeModal() : go(step - 1));
+    $('#wNext').onclick = async () => {
+      if (step < 3) return go(step + 1);
+      const bad = check(2);
+      if (bad) return go(bad);
+      const parts = mb.get();
+      const t = getT();
+      const name = $('#wName').value.trim() || autoName(parts, 'Envio ' + new Date().toLocaleDateString('pt-BR'));
+      if (mode === 'week') {
+        times = Array.from(new Set(times.filter((x) => /^\d\d:\d\d$/.test(x)))).sort();
+        if (!days.length) return toast('Escolha pelo menos um dia');
+        if (!times.length) return toast('Coloque pelo menos um horário');
+      }
+      let at = Date.now();
+      if (mode === 'once') {
+        at = new Date($('#wAt').value).getTime();
+        if (!at) return toast('Data inválida');
+        if (at < Date.now() - 60000 && !confirm('Essa data já passou. Enviar assim que possível?')) return;
+      }
+      s.postId = savePost(s.postId, name, parts, !isNew);
+      s.targets = t;
+      if (mode === 'week') Object.assign(s, { mode: 'week', days: days.slice().sort(), times, lateMin: Math.max(5, Math.min(1440, +$('#wLate').value || 120)) });
+      else {
+        if (s.mode !== 'once' || s.at !== at) s.doneAt = 0;
+        Object.assign(s, { mode: 'once', at });
+      }
+      if (isNew || !s.createdAt) s.createdAt = Date.now();
+      s.enabled = true;
+      const i = DB.gSchedules.findIndex((x) => x.id === s.id);
+      if (i >= 0) DB.gSchedules[i] = s;
+      else DB.gSchedules.push(s);
+      closeModal();
+      await persist('gPosts');
+      await persist('gSchedules');
+      if (mode === 'now') {
+        const r = await bgMsg({ type: 'wa:gtick' });
+        toast(r && r.ok ? 'Enviando para ' + gUniq(t).length + ' grupo(s) 📤' : 'Salvo — envia assim que o WhatsApp Web abrir');
+        gFilter = 'sent';
+      } else toast(isNew ? 'Programado ✅' : 'Envio salvo');
+      gTab = 'envios';
+      render();
+    };
+    go(1);
+    drawMode();
+  }
+
+  // ----- Grupos e listas
+  function gRenderGrupos(box) {
+    let h = `<div class="section"><div class="bar" style="margin:0 0 10px"><h3 style="margin:0">📋 Listas</h3><span class="hint">vários grupos com um nome só — ex: "Turmas APEX"</span><span class="grow"></span><button class="btn sm sec" id="glNew">+ Nova lista</button></div>`;
+    h += DB.gLists.length ? '<div class="glists">' + DB.gLists.map((l) => `<div class="glist"><div class="lname">📋 ${esc(l.name)}</div><div class="lsub">${l.groups.length} grupo(s): ${esc(l.groups.slice(0, 4).map((g) => g.name).join(', '))}${l.groups.length > 4 ? '…' : ''}</div>
+      <div class="bar" style="margin:8px 0 0"><button class="btn sm" data-glsend="${l.id}">Novo envio</button><button class="btn sm sec" data-gle="${l.id}">Editar</button><button class="btn sm red" data-gld="${l.id}" title="Excluir">✕</button></div></div>`).join('') + '</div>' : '<div class="hint">Nenhuma lista ainda.</div>';
+    h += `</div><div class="section"><div class="bar" style="margin:0 0 10px"><h3 style="margin:0">👥 Seus grupos</h3><span class="hint" id="gwInfo"></span><span class="grow"></span><button class="btn sm sec" id="gwRef">🔄 Atualizar</button></div>
+      <input type="search" id="gwq" placeholder="Buscar grupo…" style="max-width:320px"><div id="gwList" class="elist" style="margin-top:10px"><div class="hint">Carregando…</div></div></div>`;
+    box.innerHTML = h;
+    $('#glNew').onclick = () => gEditList(null);
+    $$('[data-gle]').forEach((b) => (b.onclick = () => gEditList(DB.gLists.find((l) => l.id === b.dataset.gle))));
+    $$('[data-glsend]').forEach((b) => (b.onclick = () => gWizard(null, { targets: { lists: [b.dataset.glsend], groups: [] } })));
+    $$('[data-gld]').forEach((b) => (b.onclick = () => { const l = DB.gLists.find((x) => x.id === b.dataset.gld); removeWithUndo('gLists', l.id, l.name); }));
+    let all = [];
+    const draw = () => {
+      const q = ZF.normalizeText($('#gwq').value);
+      const rows = all.filter((g) => !q || ZF.normalizeText(g.name).includes(q));
+      $('#gwList').innerHTML = rows.length ? rows.slice(0, 400).map((g) => {
+        const inLists = DB.gLists.filter((l) => l.groups.some((x) => x.id === g.id));
+        const nEnv = DB.gSchedules.filter((s) => s.enabled && gHas(s.targets, g.id) && gNext(s, 1).length).length;
+        return `<button type="button" class="erow gpick" data-gopen="${esc(g.id)}"><span class="licon">👥</span><div class="lmain"><div class="lname">${esc(g.name || g.id)} ${inLists.map((l) => `<span class="ftag">📋 ${esc(l.name)}</span>`).join('')}</div>
+          <div class="lsub">${g.size ? g.size + ' membros' : ''}${g.onlyAdmins ? ' · <span style="color:var(--red)">só admins enviam</span>' : ''}${nEnv ? ' · 📨 ' + nEnv + ' envio(s) programado(s)' : ''}</div></div><span class="pk-caret">›</span></button>`;
+      }).join('') : `<div class="hint">${all.length ? 'Nenhum grupo com esse nome.' : 'Nenhum grupo carregado.'}</div>`;
+      $$('[data-gopen]').forEach((b) => (b.onclick = () => gGroupDetail(all.find((x) => x.id === b.dataset.gopen))));
+    };
+    const load = async (force) => {
+      try {
+        const r = await loadGroups(force);
+        all = r.list;
+        $('#gwInfo').textContent = all.length + ' grupos · atualizado ' + fmtDate(r.at) + (r.error ? ' (' + r.error + ')' : '');
+      } catch (e) {
+        $('#gwInfo').textContent = e.message;
+      }
+      draw();
+    };
+    $('#gwq').oninput = draw;
+    $('#gwRef').onclick = () => load(true);
+    load(false);
+  }
+  function gGroupDetail(g) {
+    if (!g) return;
+    const env = DB.gSchedules.filter((s) => gHas(s.targets, g.id));
+    const a = DB.gAuto || {};
+    const autos = [];
+    if (a.welcome && a.welcome.enabled && gHas(a.welcome.targets, g.id)) autos.push('👋 Boas-vindas');
+    ((a.keywords || []).filter((k) => k.enabled && gHas(k.targets, g.id))).forEach((k) => autos.push('🔑 ' + k.words));
+    const hist = (DB.history || []).filter((x) => x.chatId === g.id).slice(0, 8);
+    const lists = DB.gLists.filter((l) => l.groups.some((x) => x.id === g.id));
+    openModal(`<h2>👥 ${esc(g.name)}</h2><p class="hint" style="margin-top:-8px">${g.size ? g.size + ' membros' : ''}${lists.length ? ' · listas: ' + lists.map((l) => esc(l.name)).join(', ') : ''}</p>
+      <div class="bar" style="margin:8px 0 14px"><button class="btn" id="gdNew">+ Novo envio neste grupo</button></div>
+      <h3 style="margin:0 0 8px">📨 Envios para este grupo</h3>${env.length ? '<div class="elist" id="gdEnv">' + env.map((s) => { const nx = gNext(s, 1)[0]; return gRow(s, nx ? `<b>${hhmm(nx)}</b><small>${dayLabel(nx)}</small>` : '<b>—</b><small>' + (s.enabled ? 'sem próximo' : 'pausado') + '</small>'); }).join('') + '</div>' : '<div class="hint">Nenhum.</div>'}
+      <h3 style="margin:16px 0 8px">🤖 Automações ativas</h3><div class="hint">${autos.length ? autos.map(esc).join(' · ') : 'Nenhuma.'}</div>
+      <h3 style="margin:16px 0 8px">📜 Últimos envios</h3>${hist.length ? hist.map((x) => `<div class="lsub">${fmtDate(x.t)} · ${esc((x.what || '').replace(/^👥\s*/, ''))} · ${x.ok ? '✅' : '❌ ' + esc(x.err || '')}</div>`).join('') : '<div class="hint">Nada ainda.</div>'}
+      <div class="modal-foot"><button class="btn sec" id="cancel">Fechar</button></div>`);
+    $('#cancel').onclick = closeModal;
+    $('#gdNew').onclick = () => gWizard(null, { targets: { lists: [], groups: [{ id: g.id, name: g.name }] } });
+    if ($('#gdEnv')) bindSchedActions($('#gdEnv'));
+  }
+  function gEditList(l) {
+    const isNew = !l;
+    l = l ? JSON.parse(JSON.stringify(l)) : { id: gid(), name: '', groups: [] };
+    openModal(`<h2>${isNew ? 'Nova lista de grupos' : 'Editar lista'}</h2>
+      <label>Nome da lista</label><input type="text" id="glName" value="${esc(l.name)}" placeholder="Turmas APEX">${GROUP_BOX_HTML}
+      <div class="modal-foot"><button class="btn sec" id="cancel">Cancelar</button><button class="btn" id="glSave">Salvar lista</button></div>`);
+    $('#cancel').onclick = closeModal;
+    const getG = groupBox(l.groups);
+    $('#glSave').onclick = async () => {
+      l.name = $('#glName').value.trim();
+      l.groups = getG();
+      if (!l.name) return toast('Dê um nome à lista');
+      if (!l.groups.length) return toast('Escolha pelo menos um grupo');
+      const i = DB.gLists.findIndex((x) => x.id === l.id);
+      if (i >= 0) DB.gLists[i] = l;
+      else DB.gLists.push(l);
+      closeModal();
+      render();
+      await persist('gLists');
+      toast('Lista salva');
+    };
+  }
+
+  // ----- Automações (liga/desliga direto no cartão)
+  function gRenderAuto(box) {
+    const a = DB.gAuto || {};
+    const w = a.welcome || {};
+    const kws = a.keywords || [];
+    const pn = (id) => { const p = postOf(id); return p ? p.name : '—'; };
+    const sw = (id, on, attr) => `<label class="switch" title="${on ? 'Ligada' : 'Desligada'}"><input type="checkbox" ${attr || ''} id="${id}" ${on ? 'checked' : ''}><span></span></label>`;
+    let h = `<p class="hint" style="margin-top:-6px">Funcionam sozinhas com o WhatsApp Web aberto (ou o servidor 24h) e respeitam o "Pausar automações".</p>
+      <div class="acard ${w.enabled ? 'on' : ''}"><div class="acard-h">${sw('gwSw', !!w.enabled)}<div class="lmain"><div class="lname">👋 Boas-vindas</div>
+        <div class="lsub">${w.postId ? `Quem entra recebe <b>${esc(pn(w.postId))}</b> · ${esc(gTargetsLabel(w.targets))}${w.mentionNew !== false ? ' · marca quem entrou' : ''}` : 'Mande uma mensagem automática para quem entrar no grupo.'}</div></div><button class="btn sm sec" id="gwEdit">${w.postId ? 'Editar' : 'Configurar'}</button></div></div>
+      <div class="acard ${kws.some((k) => k.enabled) ? 'on' : ''}"><div class="acard-h"><span style="font-size:20px">🔑</span><div class="lmain"><div class="lname">Resposta por palavra-chave</div><div class="lsub">Ex.: alguém escreve "link" no grupo → responde e marca a pessoa.</div></div><button class="btn sm" id="gkNew">+ Nova regra</button></div>
+        ${kws.length ? '<div class="elist" style="margin-top:10px">' + kws.map((k) => `<div class="erow ${k.enabled ? '' : 'off'}">${sw('', !!k.enabled, `data-gksw="${k.id}"`)}<div class="lmain"><div class="lname">${esc(k.words)} <span class="ftag">${{ contains: 'contém', exact: 'igual a', starts: 'começa com' }[k.match || 'contains']}</span></div>
+          <div class="lsub">→ ${esc(pn(k.postId))} · ${esc(gTargetsLabel(k.targets))}${k.mentionSender !== false ? ' · marca quem perguntou' : ''} · 1x a cada ${k.cooldownMin || 10} min</div></div>
+          <div class="lact"><button class="btn sm sec" data-gke="${k.id}">Editar</button><button class="btn sm red" data-gkd="${k.id}" title="Excluir">✕</button></div></div>`).join('') + '</div>' : ''}</div>`;
+    box.innerHTML = h;
+    const save = async () => { render(); await persist('gAuto'); };
+    $('#gwSw').onchange = async (e) => {
+      if (!w.postId) { e.target.checked = false; return gEditWelcome(); }
+      DB.gAuto = Object.assign({}, a, { welcome: Object.assign({}, w, { enabled: e.target.checked }) });
+      await save();
+      toast('Boas-vindas ' + (e.target.checked ? 'ligada' : 'desligada'));
+    };
+    $('#gwEdit').onclick = () => gEditWelcome();
+    $('#gkNew').onclick = () => gEditKw(null);
+    $$('[data-gke]').forEach((b) => (b.onclick = () => gEditKw(kws.find((k) => k.id === b.dataset.gke))));
+    $$('[data-gksw]').forEach((b) => (b.onchange = async () => {
+      DB.gAuto = Object.assign({}, a, { keywords: kws.map((k) => (k.id === b.dataset.gksw ? Object.assign({}, k, { enabled: b.checked }) : k)) });
+      await save();
+    }));
+    $$('[data-gkd]').forEach((b) => (b.onclick = async () => {
+      const k = kws.find((x) => x.id === b.dataset.gkd);
+      if (!confirm('Excluir a regra "' + k.words + '"?')) return;
+      DB.gAuto = Object.assign({}, a, { keywords: kws.filter((x) => x.id !== k.id) });
+      await save();
+    }));
+  }
+  function gEditWelcome() {
+    const w = Object.assign({ enabled: true, mentionNew: true, waitSec: 20, targets: { all: true } }, (DB.gAuto || {}).welcome || {});
+    const p = postOf(w.postId);
+    openModal(`<h2>👋 Boas-vindas</h2>
+      <label>Mensagem</label><div id="gwMsg"></div><div class="hint" style="margin-top:6px">Use <b>{membro}</b> para o nome de quem entrou.</div>
+      <label style="margin-top:12px">Em quais grupos</label>${targetsHtml(true)}
+      <div class="row2"><div><label class="inline" style="margin-top:8px"><input type="checkbox" id="gwMen" ${w.mentionNew !== false ? 'checked' : ''}> Marcar quem entrou (oculto)</label></div>
+      <div><label>Juntar entradas por (segundos)</label><input type="number" id="gwWait" min="3" max="600" value="${w.waitSec || 20}"><div class="hint">Se entrarem várias pessoas juntas, manda uma vez só.</div></div></div>
+      <div class="modal-foot"><button class="btn sec" id="cancel">Cancelar</button><button class="btn" id="gwSave">Salvar e ligar</button></div>`);
+    $('#cancel').onclick = closeModal;
+    const mb = msgBuilder($('#gwMsg'), p ? p.parts : [{ kind: 'text', text: 'Seja bem-vindo(a), {membro}! 👋', mention: false, delay: 0 }], { saved: true, placeholder: 'Seja bem-vindo(a), {membro}! 👋' });
+    const getT = bindTargets(w.targets);
+    $('#gwSave').onclick = async () => {
+      const parts = mb.get();
+      if (!parts.length) return toast('Escreva a mensagem de boas-vindas');
+      const t = getT();
+      if (tgEmpty(t)) return toast('Escolha os grupos (ou "Todos os grupos")');
+      const postId = savePost(w.postId, 'Boas-vindas', parts, true);
+      DB.gAuto = Object.assign({}, DB.gAuto || {}, { welcome: { enabled: true, postId, targets: t, mentionNew: $('#gwMen').checked, waitSec: Math.max(3, Math.min(600, +$('#gwWait').value || 20)) } });
+      closeModal();
+      render();
+      await persist('gPosts');
+      await persist('gAuto');
+      toast('Boas-vindas ligada');
+    };
+  }
+  function gEditKw(k) {
+    const isNew = !k;
+    k = k ? JSON.parse(JSON.stringify(k)) : { id: gid(), words: '', match: 'contains', postId: '', targets: { all: true }, mentionSender: true, cooldownMin: 10, enabled: true };
+    const p = postOf(k.postId);
+    openModal(`<h2>🔑 ${isNew ? 'Nova regra' : 'Editar regra'}</h2>
+      <div class="row2"><div><label>Palavras (separe por vírgula)</label><input type="text" id="gkW" value="${esc(k.words)}" placeholder="link, onde compra, valor"></div>
+      <div><label>Quando a mensagem</label><select id="gkM">${[['contains', 'contém a palavra'], ['exact', 'é igual à palavra'], ['starts', 'começa com a palavra']].map(([v, t]) => `<option value="${v}" ${k.match === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div></div>
+      <label style="margin-top:12px">Responder com</label><div id="gkMsg"></div>
+      <label style="margin-top:12px">Em quais grupos</label>${targetsHtml(true)}
+      <div class="row2"><div><label class="inline" style="margin-top:8px"><input type="checkbox" id="gkMen" ${k.mentionSender !== false ? 'checked' : ''}> Marcar quem perguntou (oculto)</label></div>
+      <div><label>No máximo 1 resposta a cada (min, por grupo)</label><input type="number" id="gkCd" min="0" max="1440" value="${k.cooldownMin || 10}"></div></div>
+      <div class="modal-foot"><button class="btn sec" id="cancel">Cancelar</button><button class="btn" id="gkSave">Salvar</button></div>`);
+    $('#cancel').onclick = closeModal;
+    const mb = msgBuilder($('#gkMsg'), p ? p.parts : null, { saved: true, placeholder: 'Oi {membro}! O link é: …' });
+    const getT = bindTargets(k.targets);
+    $('#gkSave').onclick = async () => {
+      k.words = $('#gkW').value.split(',').map((x) => x.trim()).filter(Boolean).join(', ');
+      if (!k.words) return toast('Escreva pelo menos uma palavra');
+      const parts = mb.get();
+      if (!parts.length) return toast('Escreva a resposta');
+      k.targets = getT();
+      if (tgEmpty(k.targets)) return toast('Escolha os grupos (ou "Todos os grupos")');
+      k.postId = savePost(k.postId, 'Resposta: ' + k.words.slice(0, 30), parts, !isNew);
+      k.match = $('#gkM').value;
+      k.mentionSender = $('#gkMen').checked;
+      k.cooldownMin = Math.max(0, Math.min(1440, +$('#gkCd').value || 0));
+      const list = ((DB.gAuto || {}).keywords || []).slice();
+      const i = list.findIndex((x) => x.id === k.id);
+      if (i >= 0) list[i] = k;
+      else list.push(k);
+      DB.gAuto = Object.assign({}, DB.gAuto || {}, { keywords: list });
+      closeModal();
+      render();
+      await persist('gPosts');
+      await persist('gAuto');
+      toast('Regra salva');
     };
   }
 
@@ -1525,7 +2100,7 @@
         if (done && c.status !== 'running') btns.push(`<button class="btn sm sec" data-restart="${c.id}">Recomeçar</button>`);
         btns.push(`<button class="btn sm red" data-del="${c.id}">Excluir</button>`);
         h += `<div class="card"><h3>🚀 ${esc(c.name)} ${statusTag(c.status)}</h3>
-          <div class="meta">${esc(targetName(c.targetType, c.targetId))} · intervalo ${c.minDelay}–${c.maxDelay}s${c.pauseEvery ? ` · pausa ${c.pauseMinutes}min a cada ${c.pauseEvery}` : ''}</div>
+          <div class="meta">${(c.variants || []).length > 1 ? '🔀 ' + c.variants.length + ' variações alternadas' : (c.variants || []).length === 1 ? esc(campVarLabel(c.variants[0])) : esc(targetName(c.targetType, c.targetId))} · intervalo ${c.minDelay}–${c.maxDelay}s${c.pauseEvery ? ` · pausa ${c.pauseMinutes}min a cada ${c.pauseEvery}` : ''}</div>
           <div class="progress"><div style="width:${pct}%"></div></div>
           <div class="meta">${done}/${total} · ✅ ${c.sent || 0} enviados · ❌ ${c.failed || 0} falhas${c.status === 'running' && c.nextAt > Date.now() ? ' · próximo às ' + new Date(c.nextAt).toLocaleTimeString('pt-BR') : ''}</div>
           ${c.lastError ? `<div class="hint" style="color:var(--red)">${esc(c.lastError)}</div>` : ''}
@@ -1554,7 +2129,7 @@
     $$('[data-edit]').forEach((b) => (b.onclick = () => editCampaign(DB.campaigns.find((c) => c.id === b.dataset.edit))));
     $$('[data-csv]').forEach((b) => (b.onclick = () => {
       const c = DB.campaigns.find((x) => x.id === b.dataset.csv);
-      const rows = [['numero', 'nome', 'status', 'erro', 'horario']].concat((c.results || []).map((r) => [r.number, r.name, r.ok ? 'enviado' : 'falha', r.err || '', fmtDate(r.t)]));
+      const rows = [['numero', 'nome', 'variacao', 'status', 'erro', 'horario']].concat((c.results || []).map((r) => [r.number, r.name, r.v || '', r.ok ? 'enviado' : 'falha', r.err || '', fmtDate(r.t)]));
       const csv = rows.map((r) => r.map((v) => '"' + String(v).replace(/"/g, '""') + '"').join(';')).join('\n');
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob(['﻿' + csv], { type: 'text/csv' }));
@@ -1567,17 +2142,28 @@
       await removeWithUndo('campaigns', c.id, c.name);
     }));
   }
+  const VL = (i) => String.fromCharCode(65 + (i % 26)) + (i >= 26 ? Math.floor(i / 26) : '');
+  function campVarLabel(v) {
+    if (!v) return '';
+    if (v.kind === 'text') return '💬 ' + String(v.text || '').slice(0, 40);
+    return targetName(v.kind === 'funnel' ? 'funnel' : 'item', v.kind === 'funnel' ? v.funnelId : v.itemId);
+  }
   function editCampaign(c) {
-    if (!DB.items.length && !DB.funnels.length) return toast('Crie um item ou funil primeiro');
     const isNew = !c;
-    c = c ? Object.assign({}, c) : { id: ZF.uid(), name: '', contacts: [], targetType: 'funnel', targetId: '', minDelay: 40, maxDelay: 90, pauseEvery: 25, pauseMinutes: 10, status: 'draft', progress: 0, results: [] };
+    c = c ? JSON.parse(JSON.stringify(c)) : { id: ZF.uid(), name: '', contacts: [], variants: [{ kind: 'text', text: '' }], minDelay: 40, maxDelay: 90, pauseEvery: 25, pauseMinutes: 10, status: 'draft', progress: 0, results: [] };
+    // campanha antiga (um único funil/item) vira a variação A
+    if (!c.variants || !c.variants.length) c.variants = c.targetId ? [c.targetType === 'item' ? { kind: 'item', itemId: c.targetId } : { kind: 'funnel', funnelId: c.targetId }] : [{ kind: 'text', text: '' }];
     openModal(`<h2>${isNew ? 'Nova campanha' : 'Editar campanha'}</h2>
       <label>Nome</label><input type="text" id="cName" value="${esc(c.name)}" placeholder="Ex: Remarketing Black Friday">
-      <label>Contatos – um por linha: <code>numero,nome</code></label><textarea id="cList" style="min-height:150px" placeholder="11999998888,Maria\n21988887777,João">${esc(c.contacts.map((x) => x.number + (x.name ? ',' + x.name : '')).join('\n'))}</textarea>
-      <div class="bar" style="margin-top:6px"><input type="file" id="cCsv" accept=".csv,.txt" style="max-width:260px"><span class="hint" id="cCount"></span></div>
+      <label style="margin-top:12px">Contatos – um por linha: <code>numero,nome</code></label><textarea id="cList" style="min-height:130px" placeholder="11999998888,Maria\n21988887777,João">${esc(c.contacts.map((x) => x.number + (x.name ? ',' + x.name : '')).join('\n'))}</textarea>
+      <div class="bar" style="margin-top:6px"><input type="file" id="cCsv" accept=".csv,.txt" style="max-width:240px"><button type="button" class="btn sm sec" id="cGrpBtn">👥 Puxar membros de grupo</button><span class="hint" id="cCount"></span></div>
+      <div id="cGrp" style="display:none">${GROUP_BOX_HTML}<div class="bar" style="margin:-4px 0 10px"><label class="inline" style="margin:0"><input type="checkbox" id="cSkipAdm"> Pular administradores</label><span class="grow"></span><button type="button" class="btn sm" id="cGrpAdd">Adicionar membros à lista</button></div><div class="hint" id="cGrpMsg"></div></div>
       <div class="hint">Aceita CSV (número na 1ª coluna, nome na 2ª). Números repetidos são removidos.</div>
-      <label>Enviar</label><select id="cTarget">${targetOptions(c.targetType, c.targetId)}</select>
-      <div class="row2"><div><label>Intervalo mínimo entre contatos (s)</label><input type="number" id="cMin" min="5" value="${c.minDelay}"></div>
+      <label style="margin-top:14px">Mensagens — variações</label>
+      <div class="hint" style="margin-bottom:8px">Cada contato recebe <b>uma</b> variação, alternando na ordem: 1º contato → A, 2º → B, 3º → C… e volta para A. Mensagens diferentes ajudam a evitar bloqueio. Use {nome}, {primeiro_nome} e suas variações ({oi}…).</div>
+      <div id="cVars"></div>
+      <div class="bar" style="margin:6px 0 0"><button type="button" class="btn sm sec" id="cAddT">+ Variação de texto</button><button type="button" class="btn sm sec" id="cAddA">+ Variação do acervo (áudio, mídia, funil…)</button></div>
+      <div class="row2" style="margin-top:12px"><div><label>Intervalo mínimo entre contatos (s)</label><input type="number" id="cMin" min="5" value="${c.minDelay}"></div>
       <div><label>Intervalo máximo (s)</label><input type="number" id="cMax" min="5" value="${c.maxDelay}"></div></div>
       <div class="row2"><div><label>Pausa longa a cada X envios (0 = nunca)</label><input type="number" id="cPe" min="0" value="${c.pauseEvery}"></div>
       <div><label>Duração da pausa (min)</label><input type="number" id="cPm" min="1" value="${c.pauseMinutes}"></div></div>
@@ -1585,9 +2171,80 @@
     const count = () => {
       const seen = new Set();
       const n = parseNumbers($('#cList').value).filter((x) => !seen.has(x.number) && seen.add(x.number)).length;
-      $('#cCount').textContent = n + ' contato(s) válido(s)';
+      const v = c.variants.length;
+      $('#cCount').textContent = n + ' contato(s) válido(s)' + (v > 1 && n ? ' · cada variação vai para ~' + Math.ceil(n / v) : '');
     };
-    count();
+    // ----- variações
+    const box = $('#cVars');
+    const read = () => {
+      $$('.cvar', box).forEach((row, i) => {
+        const v = c.variants[i];
+        if (!v) return;
+        if (v.kind === 'text') v.text = $('textarea', row).value;
+        else {
+          const val = $('select.tg', row).value;
+          const [k, ...rest] = val.split(':');
+          if (k === 'funnel') { v.kind = 'funnel'; v.funnelId = rest.join(':'); delete v.itemId; } else { v.kind = 'item'; v.itemId = rest.join(':'); delete v.funnelId; }
+        }
+      });
+    };
+    const draw = () => {
+      box.innerHTML = '';
+      c.variants.forEach((v, i) => {
+        const row = document.createElement('div');
+        row.className = 'cvar step';
+        row.innerHTML = `<div class="gp-head"><span class="vletter">${VL(i)}</span><b>${v.kind === 'text' ? '💬 Texto' : '📦 Do acervo'}</b><span class="grow"></span>
+          ${v.kind === 'text' ? `<button type="button" class="btn sm sec" data-vdup="${i}" title="Duplicar para criar outra parecida">⧉</button>` : ''}<button type="button" class="btn sm sec" data-vup="${i}" title="Subir">↑</button><button type="button" class="btn sm sec" data-vdn="${i}" title="Descer">↓</button><button type="button" class="btn sm red" data-vrm="${i}" title="Tirar">✕</button></div>
+          ${v.kind === 'text' ? `<textarea rows="3" placeholder="{Oi} {primeiro_nome}! Tudo bem? Passando pra te avisar que…">${esc(v.text || '')}</textarea>` : `<select class="tg"><option value="">— escolha —</option>${targetOptions(v.kind === 'funnel' ? 'funnel' : 'item', v.kind === 'funnel' ? v.funnelId : v.itemId)}</select>`}`;
+        box.appendChild(row);
+        if (v.kind !== 'text' && !(v.itemId || v.funnelId)) row.querySelector('select.tg').value = '';
+      });
+      $$('[data-vup]', box).forEach((b) => (b.onclick = () => { read(); const i = +b.dataset.vup; if (i > 0) { [c.variants[i - 1], c.variants[i]] = [c.variants[i], c.variants[i - 1]]; draw(); } }));
+      $$('[data-vdn]', box).forEach((b) => (b.onclick = () => { read(); const i = +b.dataset.vdn; if (i < c.variants.length - 1) { [c.variants[i + 1], c.variants[i]] = [c.variants[i], c.variants[i + 1]]; draw(); } }));
+      $$('[data-vrm]', box).forEach((b) => (b.onclick = () => { read(); c.variants.splice(+b.dataset.vrm, 1); if (!c.variants.length) c.variants.push({ kind: 'text', text: '' }); draw(); }));
+      $$('[data-vdup]', box).forEach((b) => (b.onclick = () => { read(); const i = +b.dataset.vdup; c.variants.splice(i + 1, 0, Object.assign({}, c.variants[i])); draw(); }));
+      count();
+    };
+    draw();
+    $('#cAddT').onclick = () => { read(); c.variants.push({ kind: 'text', text: '' }); draw(); setTimeout(() => { const t = $$('.cvar textarea', box).pop(); if (t) t.focus(); }, 20); };
+    $('#cAddA').onclick = () => { read(); c.variants.push({ kind: 'item', itemId: '' }); draw(); setTimeout(() => { const b = $$('.cvar .pk-btn', box).pop(); if (b) b.click(); }, 30); };
+    // ----- membros de grupo
+    let getG = null;
+    $('#cGrpBtn').onclick = () => {
+      const g = $('#cGrp');
+      g.style.display = g.style.display === 'none' ? '' : 'none';
+      if (!getG) getG = groupBox([]);
+    };
+    $('#cGrpAdd').onclick = async () => {
+      const groups = getG ? getG() : [];
+      if (!groups.length) return toast('Marque pelo menos um grupo');
+      const btn = $('#cGrpAdd');
+      btn.disabled = true;
+      btn.textContent = 'Puxando…';
+      const existing = new Set(parseNumbers($('#cList').value).map((x) => x.number));
+      let added = 0, dup = 0, hidden = 0, adm = 0;
+      const errs = [];
+      const lines = [];
+      for (const g of groups) {
+        const r = await bgMsg({ type: 'wa:gmembers', groupId: g.id });
+        if (!r || !r.members) { errs.push((g.name || 'grupo') + ': ' + ((r && r.error) || 'erro')); continue; }
+        hidden += r.hidden || 0;
+        for (const m of r.members) {
+          if ($('#cSkipAdm').checked && m.admin) { adm++; continue; }
+          const num = ZF.normalizeNumber(m.number);
+          if (!num) continue;
+          if (existing.has(num)) { dup++; continue; }
+          existing.add(num);
+          lines.push(num + (m.name ? ',' + m.name.replace(/[,;\n]/g, ' ') : ''));
+          added++;
+        }
+      }
+      if (lines.length) $('#cList').value = ($('#cList').value.trim() ? $('#cList').value.trim() + '\n' : '') + lines.join('\n');
+      btn.disabled = false;
+      btn.textContent = 'Adicionar membros à lista';
+      $('#cGrpMsg').innerHTML = `✅ <b>${added}</b> adicionado(s)` + (dup ? ` · ${dup} já estavam na lista` : '') + (adm ? ` · ${adm} admin(s) pulado(s)` : '') + (hidden ? ` · <span style="color:var(--red)">${hidden} com número escondido pelo WhatsApp (ficaram de fora)</span>` : '') + (errs.length ? `<div style="color:var(--red)">${esc(errs.join(' · '))}</div>` : '');
+      count();
+    };
     $('#cList').oninput = count;
     $('#cCsv').onchange = async () => {
       const f = $('#cCsv').files[0];
@@ -1599,15 +2256,22 @@
     };
     $('#cancel').onclick = closeModal;
     $('#saveC').onclick = async () => {
+      read();
       c.name = $('#cName').value.trim() || 'Campanha ' + new Date().toLocaleDateString('pt-BR');
       const seen = new Set();
       const newContacts = parseNumbers($('#cList').value).filter((x) => !seen.has(x.number) && seen.add(x.number));
       if (!newContacts.length) return toast('Adicione contatos válidos');
+      const vars = c.variants.filter((v) => (v.kind === 'text' ? String(v.text || '').trim() : v.itemId || v.funnelId));
+      if (!vars.length) return toast('Crie pelo menos uma mensagem');
+      if (vars.length < c.variants.length) return toast('Tem variação vazia — preencha ou tire (✕)');
+      c.variants = vars;
+      // compatibilidade (celular / versões antigas): o alvo principal é a variação A quando ela é do acervo
+      const v0 = vars[0];
+      c.targetType = v0.kind === 'funnel' ? 'funnel' : v0.kind === 'item' ? 'item' : '';
+      c.targetId = v0.kind === 'funnel' ? v0.funnelId : v0.kind === 'item' ? v0.itemId : '';
       const changed = JSON.stringify(newContacts) !== JSON.stringify(c.contacts);
       c.contacts = newContacts;
       if (changed && c.progress > c.contacts.length) c.progress = c.contacts.length;
-      Object.assign(c, parseTarget($('#cTarget').value));
-      if (!c.targetId) return toast('Escolha o que enviar');
       c.minDelay = Math.max(5, Number($('#cMin').value) || 40);
       c.maxDelay = Math.max(c.minDelay, Number($('#cMax').value) || c.minDelay);
       c.pauseEvery = Math.max(0, Number($('#cPe').value) || 0);
@@ -1686,6 +2350,8 @@
       if (its.length) groups.push(['💬 Mensagens, áudios e mídias', its.map((i) => ({ icon: ZF.typeIcon(i.type), name: i.name, sub: (i.shortcut ? '/' + i.shortcut + ' · ' : '') + (folderOf(i) ? '📁 ' + folderOf(i) + ' · ' : '') + (i.type === 'text' ? (i.text || '').slice(0, 90) : ZF.typeLabel(i.type) + (i.caption ? ' · ' + i.caption.slice(0, 60) : '')), act: 'item:' + i.id }))]);
       const fs = DB.funnels.filter((f) => hit(f.name, f.shortcut, f.folder, f.steps.map((st) => itemName(st.itemId)).join(' ')));
       if (fs.length) groups.push(['🔁 Funis', fs.map((f) => ({ icon: '🔁', name: f.name, sub: (f.shortcut ? '/' + f.shortcut + ' · ' : '') + (folderOf(f) ? '📁 ' + folderOf(f) + ' · ' : '') + f.steps.length + ' etapa(s)', act: 'funnel:' + f.id }))]);
+      const ge = (DB.gSchedules || []).filter((x) => { const p = postOf(x.postId); return p && hit(p.name, (p.parts || []).map((y) => y.text || '').join(' '), gTargetsLabel(x.targets)); });
+      if (ge.length) groups.push(['👥 Envios de grupo', ge.map((x) => { const p = postOf(x.postId); return { icon: '📨', name: p.name, sub: gTargetsLabel(x.targets) + ' · ' + repeatLabel(x) + (postHasMention(p) ? ' · @ todos' : ''), act: 'genv:' + x.id }; })]);
       const rs = DB.remarketing.filter((r) => hit(r.name, r.stages.map((x) => targetName(x.targetType, x.targetId)).join(' ')));
       if (rs.length) groups.push(['🔔 Remarketing', rs.map((r) => ({ icon: '🔔', name: r.name, sub: RM_MODE[r.mode || 'no_reply'].label + ' · ' + r.stages.length + ' etapa(s)' + (r.enabled ? '' : ' · pausada'), act: 'rmkt:' + r.id }))]);
       const ts = DB.triggers.filter((t) => hit(t.name, (t.keywords || []).join(' '), targetName(t.targetType, t.targetId)));
@@ -1729,6 +2395,7 @@
       if (k === 'rmkt') { setView('remarketing'); return editRemarketing(DB.remarketing.find((x) => x.id === id)); }
       if (k === 'trig') { setView('triggers'); return editTrigger(DB.triggers.find((x) => x.id === id)); }
       if (k === 'sch') { setView('schedules'); return editSchedule(DB.schedules.find((x) => x.id === id)); }
+      if (k === 'genv') { gTab = 'envios'; setView('groups'); return gWizard(DB.gSchedules.find((x) => x.id === id)); }
       if (k === 'camp') return setView('campaigns');
       if (k === 'view') return setView(id);
     }));
@@ -1765,7 +2432,7 @@
 
   // ------------------------------------------------------------ RELATÓRIO
   let repDays = (() => { try { return Number(localStorage.getItem('zfRepDays')) || 30; } catch (e) { return 30; } })();
-  const SRC_LABEL = { manual: '👆 Manual (você clicou)', gatilho: '🎯 Gatilhos', remarketing: '🔔 Remarketing', agendamento: '⏰ Agendamentos', campanha: '🚀 Campanhas', celular: '📱 Pelo celular' };
+  const SRC_LABEL = { manual: '👆 Manual (você clicou)', gatilho: '🎯 Gatilhos', remarketing: '🔔 Remarketing', agendamento: '⏰ Agendamentos', campanha: '🚀 Campanhas', celular: '📱 Pelo celular', grupo: '👥 Grupos' };
   function repDaysList(n) {
     const out = [];
     const now = new Date();
@@ -2001,7 +2668,7 @@
       abInfo();
     };
     $('#exp').onclick = async () => {
-      const data = await chrome.storage.local.get(['items', 'funnels', 'triggers', 'schedules', 'campaigns', 'settings', 'remarketing', 'rmktBlock', 'stats']);
+      const data = await chrome.storage.local.get(['items', 'funnels', 'triggers', 'schedules', 'campaigns', 'settings', 'remarketing', 'rmktBlock', 'stats', 'gLists', 'gPosts', 'gSchedules', 'gAuto']);
       data.items = await ZF.fullItems(data.items || []); // backup com as mídias dentro (formato de sempre)
       data.__zapfunil = 1;
       data.exportedAt = new Date().toISOString();
@@ -2032,7 +2699,7 @@
         else if (mine && mine.hasMedia) Object.assign(c, { hasMedia: true, mediaKb: mine.mediaKb });
         return c;
       }).filter((x) => x.type === 'text' || x.data || x.hasMedia);
-      for (const k of ['items', 'funnels', 'triggers', 'schedules', 'campaigns', 'remarketing']) {
+      for (const k of ['items', 'funnels', 'triggers', 'schedules', 'campaigns', 'remarketing', 'gLists', 'gPosts', 'gSchedules']) {
         const inc = data[k] || [];
         if (replace) out[k] = inc;
         else {
@@ -2040,6 +2707,7 @@
           out[k] = DB[k].concat(inc.filter((x) => !ids.has(x.id)));
         }
       }
+      if (data.gAuto && (replace || !Object.keys(DB.gAuto || {}).length)) out.gAuto = data.gAuto;
       // relatório: junta os dias (fica com o maior de cada dia)
       if (data.stats && typeof data.stats === 'object') {
         const st = replace ? {} : JSON.parse(JSON.stringify(DB.stats || {}));
@@ -2072,7 +2740,7 @@
       } else DB[k] = v || (ZF.OBJ_KEYS.includes(k) ? {} : []);
     }
     // atualiza telas "ao vivo" sem atrapalhar quem está editando
-    if ($('#modal').classList.contains('hidden') && ['campaigns', 'schedules', 'history', 'remarketing', 'report'].includes(view) && keys.some((k) => ['campaigns', 'schedules', 'history', 'rmktQueue', 'stats'].includes(k))) {
+    if ($('#modal').classList.contains('hidden') && ['campaigns', 'schedules', 'history', 'remarketing', 'report', 'groups'].includes(view) && keys.some((k) => ['campaigns', 'schedules', 'history', 'rmktQueue', 'stats', 'gSchedules'].includes(k))) {
       clearTimeout(liveT);
       liveT = setTimeout(render, view === 'report' ? 1500 : 0);
     }
