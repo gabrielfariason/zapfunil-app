@@ -73,6 +73,7 @@
   // "marcar todos" sem @ no texto: a menção vai escondida, todo mundo é notificado
   const memberCache = new Map();
   async function mentionList(chatId, opts) {
+    if (opts && Array.isArray(opts.mentionIds) && opts.mentionIds.length && /@g\.us$/.test(chatId) && !opts.mentionAll) return opts.mentionIds.map(String);
     if (!opts || !opts.mentionAll || !/@g\.us$/.test(chatId)) return null;
     const c = memberCache.get(chatId);
     if (c && Date.now() - c.at < 10 * 60000) return c.ids;
@@ -187,6 +188,7 @@
       const o = Object.assign({ createChat: true }, opts || {});
       const ml = await mentionList(chatId, o);
       delete o.mentionAll;
+      delete o.mentionIds;
       if (ml) o.mentionedList = ml;
       if (o.type === 'audio' && o.isPtt) o.waveform = true;
       const r = await WPP.chat.sendFileMessage(chatId, cleanDataUrl(dataUrl), o);
@@ -202,6 +204,28 @@
         try { ro = !!(c.groupMetadata && c.groupMetadata.announce && !c.groupMetadata.participants.iAmAdmin()); } catch (e) {}
         return { id: wid(c.id), name: c.formattedTitle || c.name || (c.groupMetadata && c.groupMetadata.subject) || '', size, onlyAdmins: ro };
       }).filter((g) => /@g\.us$/.test(g.id));
+    },
+    // membros de um grupo com número (para disparo no privado). Quem o WhatsApp esconde o número fica de fora.
+    async groupMembers(groupId) {
+      const ps = (await WPP.group.getParticipants(groupId)) || [];
+      let me = '';
+      try { me = wid(WPP.conn.getMyUserId()).replace(/@.*/, ''); } catch (e) {}
+      const out = [];
+      let hidden = 0;
+      for (const p of ps) {
+        const id = wid(p.id);
+        let num = /@c\.us$/.test(id) ? id.replace(/@.*/, '') : '';
+        if (!num) {
+          try { if (p.phoneNumber) num = wid(p.phoneNumber).replace(/@.*/, ''); } catch (e) {}
+        }
+        if (!num) {
+          try { const e = await WPP.contact.getPnLidEntry(id); if (e && e.phoneNumber && e.phoneNumber.id) num = String(e.phoneNumber.id); } catch (e) {}
+        }
+        if (me && (num === me || id.replace(/@.*/, '') === me)) continue;
+        if (!num) { hidden++; continue; }
+        out.push({ number: num, name: contactName(num + '@c.us') || contactName(id) || '', admin: !!(p.isAdmin || p.isSuperAdmin) });
+      }
+      return { members: out, hidden };
     },
     async listChats() {
       const chats = await WPP.chat.list({ onlyUsers: true });
@@ -330,10 +354,20 @@
             body: typeof msg.body === 'string' && (msg.type === 'chat') ? msg.body : (msg.caption || ''),
             preview: preview(msg),
             name: contactName(chatId),
+            author: /@g\.us$/.test(chatId) && !fromMe ? wid(msg.author) || '' : '',
+            authorName: /@g\.us$/.test(chatId) && !fromMe && msg.author ? contactName(wid(msg.author)) || msg.notifyName || '' : '',
             t: msg.t
           }
         });
       } catch (e) {}
+    });
+    // alguém entrou num grupo (para a mensagem de boas-vindas)
+    WPP.on('group.participant_changed', (e) => {
+      try {
+        if (!e || (e.action !== 'add' && e.action !== 'join')) return;
+        const parts = (e.participants || []).map(String);
+        post({ event: 'groupJoin', data: { groupId: String(e.groupId), action: e.action, participants: parts, names: parts.map((x) => contactName(x) || '') } });
+      } catch (err) {}
     });
   });
 })();

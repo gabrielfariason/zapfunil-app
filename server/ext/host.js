@@ -7,7 +7,7 @@
 // 2) Sincronização: funis, mensagens, remarketing etc. ficam iguais nos dois aparelhos (tabela zf_kv).
 /* global ZFRemote */
 const ZFHost = (() => {
-  const SYNC_KEYS = ['items', 'funnels', 'triggers', 'schedules', 'campaigns', 'settings', 'triggerLog', 'history', 'remarketing', 'rmktQueue', 'rmktBlock', 'stats'];
+  const SYNC_KEYS = ['items', 'funnels', 'triggers', 'schedules', 'campaigns', 'settings', 'triggerLog', 'history', 'remarketing', 'rmktQueue', 'rmktBlock', 'stats', 'gLists', 'gPosts', 'gSchedules', 'gAuto'];
   const VERDICT_MS = 30000;
   const me = { id: null, kind: 'mac', name: 'Mac', multi: false, loaded: false };
   let verdict = { cloud: null, until: 0 };
