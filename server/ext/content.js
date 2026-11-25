@@ -669,12 +669,13 @@
   }
   let gBusy = false;
   async function gTick() {
-    if (!isLeader || !waReady || gBusy || !DB || !autoOn()) return;
+    if (!isLeader || !waReady || gBusy || !DB) return;
     gBusy = true;
     try {
       const now = Date.now();
       for (const s of (DB.gSchedules || []).slice()) {
         if (!s.enabled) continue;
+        if (!s.now && !autoOn()) continue; // "Enviar agora" sai mesmo com as automações pausadas
         const due = gDue(s, now);
         if (!due.length) continue;
         // marca antes de enviar (nunca duplica, mesmo se a aba fechar no meio)
@@ -2207,7 +2208,7 @@
     }
     if (msg.type === 'zf:gtick') {
       if (!isLeader || !waReady || !DB) {
-        sendResponse({ notReady: true });
+        sendResponse({ notReady: true, why: !waReady ? 'loading' : 'notLeader' });
         return;
       }
       setTimeout(() => gTick(), 300);

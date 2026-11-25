@@ -1874,10 +1874,12 @@
       }
       s.postId = savePost(s.postId, name, parts, !isNew);
       s.targets = t;
-      if (mode === 'week') Object.assign(s, { mode: 'week', days: days.slice().sort(), times, lateMin: Math.max(5, Math.min(1440, +$('#wLate').value || 120)) });
+      if (mode === 'week') { Object.assign(s, { mode: 'week', days: days.slice().sort(), times, lateMin: Math.max(5, Math.min(1440, +$('#wLate').value || 120)) }); delete s.now; }
       else {
         if (s.mode !== 'once' || s.at !== at) s.doneAt = 0;
         Object.assign(s, { mode: 'once', at });
+        if (mode === 'now') s.now = true;
+        else delete s.now;
       }
       if (isNew || !s.createdAt) s.createdAt = Date.now();
       s.enabled = true;
@@ -1889,7 +1891,12 @@
       await persist('gSchedules');
       if (mode === 'now') {
         const r = await bgMsg({ type: 'wa:gtick' });
-        toast(r && r.ok ? 'Enviando para ' + gUniq(t).length + ' grupo(s) 📤' : 'Salvo — envia assim que o WhatsApp Web abrir');
+        const why = (r && r.why) || '';
+        toast(r && r.ok ? 'Enviando para ' + gUniq(t).length + ' grupo(s) 📤'
+          : why === 'reloaded' ? 'O WhatsApp Web estava sem a extensão — recarreguei. O envio sai assim que ele abrir 🔄'
+          : why === 'closed' ? 'Salvo. Abra o WhatsApp Web neste Chrome e o envio sai na hora.'
+          : why === 'notLeader' ? 'Salvo. Outro aparelho (servidor 24h) está no comando e vai enviar.'
+          : 'Salvo. O WhatsApp Web ainda está carregando — o envio sai assim que ele terminar.');
         gFilter = 'sent';
       } else toast(isNew ? 'Programado ✅' : 'Envio salvo');
       gTab = 'envios';

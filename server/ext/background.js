@@ -59,13 +59,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg && msg.type === 'wa:gtick') {
     chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }).then(async (tabs) => {
+      if (!tabs.length) return sendResponse({ ok: false, why: 'closed' });
+      let why = '';
+      const dead = [];
       for (const t of tabs) {
         try {
           const r = await chrome.tabs.sendMessage(t.id, { type: 'zf:gtick' });
           if (r && r.ok) return sendResponse(r);
-        } catch (e) {}
+          if (r && r.why) why = r.why;
+        } catch (e) {
+          dead.push(t.id);
+        }
       }
-      sendResponse({ ok: false });
+      // ninguém respondeu: a aba está aberta mas sem a extensão → recarrega e o envio sai quando voltar
+      if (dead.length === tabs.length) {
+        for (const id of dead) { lastRevive.delete(id); await reviveWa(id, 'enviar agora'); }
+        return sendResponse({ ok: false, why: 'reloaded' });
+      }
+      sendResponse({ ok: false, why: why || 'loading' });
     });
     return true;
   }
@@ -139,6 +150,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   sendResponse(ZFHost.current());
 });
 
+// ---- vigia: se a aba do WhatsApp ficar sem a extensão rodando, recarrega ela sozinha (no máx. 1x a cada 10 min)
+const deadTicks = new Map();
+const lastRevive = new Map();
+async function reviveWa(tabId, why) {
+  if (Date.now() - (lastRevive.get(tabId) || 0) < 10 * 60000) return false;
+  lastRevive.set(tabId, Date.now());
+  deadTicks.delete(tabId);
+  try {
+    await chrome.tabs.reload(tabId);
+    chrome.storage.local.set({ waRevived: { at: Date.now(), why } }).catch(() => {});
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+// extensão instalada/atualizada (↻): as abas do WhatsApp abertas ficam sem a extensão → recarrega
+chrome.runtime.onInstalled.addListener(async (details) => {
+  if (details.reason !== 'update' && details.reason !== 'install') return;
+  try {
+    const tabs = await chrome.tabs.query({ url: 'https://web.whatsapp.com/*' });
+    for (const t of tabs) if (t.status === 'complete' && !t.discarded) reviveWa(t.id, 'extensão atualizada');
+  } catch (e) {}
+});
+
 let clockN = 0;
 let remoteBusy = false;
 let lastPublish = 0;
@@ -149,7 +184,16 @@ async function clock() {
   } catch (e) {
     return;
   }
-  for (const t of tabs) chrome.tabs.sendMessage(t.id, { type: 'zf:tick' }).catch(() => {});
+  for (const t of tabs) {
+    chrome.tabs.sendMessage(t.id, { type: 'zf:tick' }).then(() => deadTicks.delete(t.id), (e) => {
+      // aba do WhatsApp carregada mas sem a extensão rodando dentro (ex.: extensão atualizada com a aba aberta)
+      if (!/Receiving end does not exist|Could not establish connection/i.test((e && e.message) || '')) return deadTicks.delete(t.id);
+      if (t.status !== 'complete' || t.discarded) return;
+      const n = (deadTicks.get(t.id) || 0) + 1;
+      deadTicks.set(t.id, n);
+      if (n === 30) reviveWa(t.id, 'a extensão parou de responder nesta aba');
+    });
+  }
   clockN++;
   if (clockN % 3 === 0) remoteCycle(tabs);
 }
