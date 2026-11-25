@@ -124,8 +124,53 @@ const ZF = (() => {
     };
   }
 
-  function save(obj) {
-    return chrome.storage.local.set(obj);
+  // ---------------------------------------------------------------- mídias separadas
+  // Áudios/vídeos/imagens ficam em chaves próprias ("media:<id>"), fora da lista de itens.
+  // Assim salvar qualquer coisa não move dezenas de MB, e tudo fica rápido.
+  // Itens antigos (com .data dentro) continuam funcionando: são separados na próxima gravação.
+  const MEDIA = 'media:';
+  const mediaKey = (id) => MEDIA + id;
+  function splitItems(arr) {
+    const media = {};
+    const items = (arr || []).map((i) => {
+      if (!i || typeof i.data !== 'string' || !i.data) return i;
+      media[mediaKey(i.id)] = i.data;
+      const c = Object.assign({}, i);
+      delete c.data;
+      c.hasMedia = true;
+      c.mediaKb = Math.round((i.data.length * 0.75) / 1024);
+      return c;
+    });
+    return { items, media };
+  }
+  async function getMedia(id) {
+    const k = mediaKey(id);
+    return (await chrome.storage.local.get(k))[k] || '';
+  }
+  // devolve uma cópia do item com .data (lendo a mídia se precisar)
+  async function withMedia(item) {
+    if (!item || item.data || !item.hasMedia) return item;
+    return Object.assign({}, item, { data: await getMedia(item.id) });
+  }
+  // lista completa no formato antigo (com .data e sem os campos internos) — para backup e sincronização
+  async function fullItems(arr) {
+    const need = (arr || []).filter((i) => i && !i.data && i.hasMedia).map((i) => mediaKey(i.id));
+    const got = need.length ? await chrome.storage.local.get(need) : {};
+    return (arr || []).map((i) => {
+      if (!i || (!i.hasMedia && !i.data)) return i;
+      const c = Object.assign({}, i);
+      if (!c.data && got[mediaKey(i.id)]) c.data = got[mediaKey(i.id)];
+      delete c.hasMedia;
+      delete c.mediaKb;
+      return c;
+    });
+  }
+  // grava; se for a lista de itens, separa as mídias antes (mídia primeiro, depois a lista)
+  async function save(obj) {
+    if (!obj || !Array.isArray(obj.items)) return chrome.storage.local.set(obj);
+    const { items, media } = splitItems(obj.items);
+    if (Object.keys(media).length) await chrome.storage.local.set(media);
+    return chrome.storage.local.set(Object.assign({}, obj, { items }));
   }
 
   function normalizeNumber(raw) {
@@ -227,5 +272,5 @@ const ZF = (() => {
     return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
-  return { DEFAULT_SETTINGS, setVariations, dayKey, folders, KEYS, OBJ_KEYS, UNIT, UNIT_LABEL, fmtDelay, nextAllowed, isOptOut, uid, load, save, normalizeNumber, applyVars, matchTrigger, normalizeText, typeLabel, typeIcon, fmtDuration, escapeHtml, greeting };
+  return { DEFAULT_SETTINGS, setVariations, dayKey, folders, MEDIA, mediaKey, splitItems, getMedia, withMedia, fullItems, KEYS, OBJ_KEYS, UNIT, UNIT_LABEL, fmtDelay, nextAllowed, isOptOut, uid, load, save, normalizeNumber, applyVars, matchTrigger, normalizeText, typeLabel, typeIcon, fmtDuration, escapeHtml, greeting };
 })();

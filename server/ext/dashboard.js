@@ -24,6 +24,7 @@
     pending[key] = (pending[key] || 0) + 1;
     try {
       await ZF.save({ [key]: DB[key] });
+      if (key === 'items') DB.items = ZF.splitItems(DB.items).items; // mídia já foi para a chave própria
     } catch (e) {
       if (/context invalidated/i.test((e && e.message) || '')) staleBanner();
       throw e;
@@ -215,9 +216,11 @@
   // ----- prévias leves: mídia só vira <video>/<audio> quando você clica (antes travava com vários vídeos)
   const blobUrls = new Map();
   async function blobUrl(item) {
-    const k = item.id + ':' + (item.data || '').length;
+    const k = item.id + ':' + (item.data ? item.data.length : item.mediaKb || 0);
     if (blobUrls.has(k)) return blobUrls.get(k);
-    const b = await (await fetch(item.data)).blob();
+    const data = item.data || (await ZF.getMedia(item.id));
+    if (!data) throw new Error('sem arquivo');
+    const b = await (await fetch(data)).blob();
     const u = URL.createObjectURL(b);
     blobUrls.set(k, u);
     return u;
@@ -234,7 +237,7 @@
         if (!e.isIntersecting) return;
         io.unobserve(e.target);
         const it = DB.items.find((x) => x.id === e.target.dataset.mprev);
-        if (!it || !it.data) return;
+        if (!it || !(it.data || it.hasMedia)) return;
         try { e.target.innerHTML = `<img src="${await blobUrl(it)}" alt="">`; } catch (err) {}
       });
     }, { rootMargin: '200px' }) : null;
@@ -454,6 +457,187 @@
     return true;
   }
 
+  // ------------------------------------------------------------ seletor de mensagem/funil (filtro por tipo, pasta e busca)
+  // O <select> original continua guardando o valor (nada muda na hora de salvar); por cima aparece um botão
+  // que abre a lista com filtros. Padrão: "Todos".
+  const PK_KINDS = [['all', 'Todos'], ['funnel', '🔁 Funis'], ['text', '💬 Texto'], ['audio', '🎤 Áudio'], ['image', '🖼️ Imagem'], ['video', '🎬 Vídeo'], ['document', '📄 Doc']];
+  let pkEl = null;
+  function pkEntry(v) {
+    if (!v) return null;
+    let kind = 'item';
+    let id = v;
+    const m = /^(funnel|item):(.*)$/s.exec(v);
+    if (m) { kind = m[1]; id = m[2]; }
+    if (kind === 'funnel') {
+      const f = DB.funnels.find((x) => x.id === id);
+      return f ? { v, kind: 'funnel', icon: '🔁', name: f.name, folder: folderOf(f), sub: f.steps.length + ' etapa(s)' } : null;
+    }
+    const i = DB.items.find((x) => x.id === id);
+    return i ? { v, kind: i.type, icon: ZF.typeIcon(i.type), name: i.name, folder: folderOf(i), sub: i.type === 'text' ? (i.text || '').slice(0, 70) : ZF.typeLabel(i.type) + (i.duration ? ' · ' + ZF.fmtDuration(i.duration) : '') } : null;
+  }
+  function closePicker() {
+    if (pkEl) pkEl.remove();
+    pkEl = null;
+    document.removeEventListener('mousedown', pkOutside, true);
+  }
+  function pkOutside(e) {
+    if (pkEl && !pkEl.contains(e.target) && !e.target.closest('.pk-btn')) closePicker();
+  }
+  function attachPicker(sel) {
+    if (!sel || sel.dataset.pk) return;
+    sel.dataset.pk = '1';
+    sel.classList.add('pk-hidden');
+    sel.tabIndex = -1;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pk-btn';
+    sel.after(btn);
+    const label = () => {
+      const e = pkEntry(sel.value);
+      btn.innerHTML = e ? `<span>${e.icon}</span><span class="pk-name">${esc(e.name)}</span>${e.folder ? `<span class="ftag">📁 ${esc(e.folder)}</span>` : ''}<span class="pk-caret">▾</span>` : '<span class="hint">— escolha —</span><span class="pk-caret">▾</span>';
+    };
+    label();
+    sel.addEventListener('change', label);
+    btn.onclick = (e) => {
+      e.preventDefault();
+      if (pkEl && pkEl.dataset.for === sel.dataset.pkid) return closePicker();
+      openPicker(sel, btn);
+    };
+  }
+  let pkSeq = 0;
+  function openPicker(sel, btn) {
+    closePicker();
+    sel.dataset.pkid = sel.dataset.pkid || 'pk' + ++pkSeq;
+    const all = [...sel.options].map((o) => pkEntry(o.value)).filter(Boolean);
+    const kinds = PK_KINDS.filter(([k]) => k === 'all' || all.some((e) => e.kind === k));
+    const fl = ZF.folders(all.map((e) => ({ folder: e.folder })));
+    let kind = 'all';
+    let fold = '';
+    pkEl = document.createElement('div');
+    pkEl.className = 'pk-pop';
+    pkEl.dataset.for = sel.dataset.pkid;
+    pkEl.innerHTML = `<input type="search" class="pk-q" placeholder="Buscar pelo nome…">
+      <div class="pk-kinds">${kinds.map(([k, t]) => `<button type="button" data-k="${k}" class="chip ${k === 'all' ? 'on' : ''}">${t}</button>`).join('')}</div>
+      ${fl.length ? `<select class="pk-f"><option value="">📁 Todas as pastas</option>${fl.map((f) => `<option value="${esc(f)}">📁 ${esc(f)}</option>`).join('')}<option value="__none">Sem pasta</option></select>` : ''}
+      <div class="pk-list"></div>`;
+    document.body.appendChild(pkEl);
+    const r = btn.getBoundingClientRect();
+    const w = Math.max(r.width, 380);
+    pkEl.style.width = w + 'px';
+    pkEl.style.left = Math.min(r.left, window.innerWidth - w - 10) + 'px';
+    const below = window.innerHeight - r.bottom;
+    if (below < 300 && r.top > below) pkEl.style.bottom = window.innerHeight - r.top + 4 + 'px';
+    else pkEl.style.top = r.bottom + 4 + 'px';
+    pkEl.style.maxHeight = Math.max(240, Math.min(440, below > 300 ? below - 20 : r.top - 20)) + 'px';
+    const q = $('.pk-q', pkEl);
+    const draw = () => {
+      const t = ZF.normalizeText(q.value);
+      const rows = all.filter((e) => (kind === 'all' || e.kind === kind) && (!fold || (fold === '__none' ? !e.folder : e.folder === fold)) && (!t || ZF.normalizeText(e.name + ' ' + e.folder + ' ' + e.sub).includes(t)));
+      $('.pk-list', pkEl).innerHTML = rows.length ? rows.map((e) => `<button type="button" class="pk-row ${e.v === sel.value ? 'on' : ''}" data-v="${esc(e.v)}"><span class="pk-ic">${e.icon}</span><span class="pk-main"><span class="pk-t"><b>${esc(e.name)}</b>${e.folder ? `<span class="ftag">📁 ${esc(e.folder)}</span>` : ''}</span><small>${esc(e.sub)}</small></span></button>`).join('') : '<div class="hint" style="padding:12px">Nada encontrado.</div>';
+      $$('.pk-row', pkEl).forEach((b) => (b.onclick = () => {
+        sel.value = b.dataset.v;
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        closePicker();
+      }));
+    };
+    $$('[data-k]', pkEl).forEach((b) => (b.onclick = () => {
+      kind = b.dataset.k;
+      $$('[data-k]', pkEl).forEach((x) => x.classList.toggle('on', x === b));
+      draw();
+    }));
+    if ($('.pk-f', pkEl)) $('.pk-f', pkEl).onchange = (e) => { fold = e.target.value; draw(); };
+    q.oninput = draw;
+    q.onkeydown = (e) => {
+      if (e.key === 'Escape') closePicker();
+      if (e.key === 'Enter') { e.preventDefault(); const f = $('.pk-row', pkEl); if (f) f.click(); }
+    };
+    draw();
+    setTimeout(() => q.focus(), 0);
+    document.addEventListener('mousedown', pkOutside, true);
+  }
+  // qualquer seletor de "o que enviar" que aparecer num modal ganha o seletor novo
+  new MutationObserver(() => {
+    $$('#modal select.it, #modal select.tg, #modal select#tTarget, #modal select#sTarget, #modal select#cTarget').forEach(attachPicker);
+    if (pkEl && $('#modal').classList.contains('hidden')) closePicker();
+  }).observe(document.getElementById('modal'), { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+
+  // ------------------------------------------------------------ grupos + marcar todos (oculto)
+  async function loadGroups(force) {
+    const c = (await chrome.storage.local.get('waGroups')).waGroups;
+    if (c && c.list && !force) return { list: c.list, at: c.at };
+    const r = await bgMsg({ type: 'wa:groups' });
+    if (r && r.list) return { list: r.list, at: Date.now() };
+    if (c && c.list) return { list: c.list, at: c.at, error: r && r.error };
+    throw new Error((r && r.error) || 'não consegui carregar os grupos');
+  }
+  // caixa de grupos dentro de um modal; devolve getter da seleção
+  function groupBox(selected) {
+    let picked = (selected || []).map((g) => ({ id: g.id, name: g.name }));
+    let list = [];
+    const box = $('#grpBox');
+    const draw = () => {
+      const q = ZF.normalizeText(($('#grpQ') || {}).value || '');
+      const merged = list.slice();
+      picked.forEach((p) => { if (!merged.some((g) => g.id === p.id)) merged.unshift(Object.assign({ size: 0 }, p)); });
+      const rows = merged.filter((g) => !q || ZF.normalizeText(g.name).includes(q));
+      $('#grpList').innerHTML = rows.length ? rows.slice(0, 300).map((g) => `<label class="grp-row"><input type="checkbox" data-g="${esc(g.id)}" ${picked.some((p) => p.id === g.id) ? 'checked' : ''}> <span>👥 ${esc(g.name || g.id)}</span>${g.size ? `<small>${g.size} membros</small>` : ''}${g.onlyAdmins ? '<small style="color:var(--red)">só admins enviam</small>' : ''}</label>`).join('') : `<div class="hint">${list.length ? 'Nenhum grupo com esse nome.' : 'Clique em “Carregar grupos”.'}</div>`;
+      $$('#grpList [data-g]').forEach((cb) => (cb.onchange = () => {
+        const g = merged.find((x) => x.id === cb.dataset.g);
+        if (cb.checked) picked.push({ id: g.id, name: g.name });
+        else picked = picked.filter((p) => p.id !== g.id);
+        $('#grpN').textContent = picked.length ? picked.length + ' selecionado(s)' : '';
+        box.dispatchEvent(new Event('change'));
+      }));
+      $('#grpN').textContent = picked.length ? picked.length + ' selecionado(s)' : '';
+    };
+    const load = async (force) => {
+      $('#grpLoad').disabled = true;
+      $('#grpLoad').textContent = 'Carregando…';
+      try {
+        const r = await loadGroups(force);
+        list = r.list;
+        $('#grpInfo').textContent = list.length + ' grupos' + (r.at ? ' · atualizado ' + fmtDate(r.at) : '') + (r.error ? ' (' + r.error + ')' : '');
+      } catch (e) {
+        $('#grpInfo').textContent = e.message;
+      }
+      $('#grpLoad').disabled = false;
+      $('#grpLoad').textContent = '🔄 Atualizar grupos';
+      draw();
+    };
+    $('#grpLoad').onclick = () => load(true);
+    $('#grpQ').oninput = draw;
+    load(false);
+    return () => picked;
+  }
+  const GROUP_BOX_HTML = `<div id="grpBox" class="section" style="margin:10px 0;padding:12px 14px"><div class="bar" style="margin:0 0 8px"><b>👥 Grupos</b><span class="hint" id="grpN"></span><span class="grow"></span><button type="button" class="btn sm sec" id="grpLoad">Carregar grupos</button></div>
+    <input type="search" id="grpQ" placeholder="Buscar grupo…"><div id="grpList" class="grp-list"></div><div class="hint" id="grpInfo"></div></div>`;
+  function mentionHtml(m) {
+    m = m || {};
+    return `<div id="mBox" class="section" style="margin:10px 0;padding:12px 14px"><label class="inline"><input type="checkbox" id="mOn" ${m.on ? 'checked' : ''}> <b>👥 Marcar todos do grupo</b> <span class="hint">(oculto: todo mundo é notificado, sem aparecer @ no texto)</span></label>
+      <div id="mOpts" class="row2" style="margin-top:8px"><div><label>Em quais mensagens</label><select id="mAt">${[['first', 'Na 1ª mensagem'], ['last', 'Na última'], ['all', 'Em todas'], ['custom', 'Escolher quais…']].map(([v, t]) => `<option value="${v}" ${(m.at || 'first') === v ? 'selected' : ''}>${t}</option>`).join('')}</select></div>
+      <div id="mCustom"><label>Números das mensagens</label><input type="text" id="mList" value="${esc((m.list || []).join(', '))}" placeholder="ex: 2  ou  1, 3"></div></div>
+      <div class="hint" id="mSteps"></div></div>`;
+  }
+  function bindMention(targetSel) {
+    const upd = () => {
+      $('#mOpts').style.display = $('#mOn').checked ? '' : 'none';
+      $('#mSteps').style.display = $('#mOn').checked ? '' : 'none';
+      $('#mCustom').style.visibility = $('#mAt').value === 'custom' ? 'visible' : 'hidden';
+      const t = parseTarget(targetSel.value);
+      const f = t.targetType === 'funnel' ? DB.funnels.find((x) => x.id === t.targetId) : null;
+      let n = 0;
+      $('#mSteps').innerHTML = f ? 'Mensagens deste funil: ' + f.steps.filter((x) => x.itemId && x.kind !== 'wait_reply').map((x) => { const it = DB.items.find((i) => i.id === x.itemId); return it ? `<b>${++n}</b> ${ZF.typeIcon(it.type)} ${esc(it.name)}` : ''; }).filter(Boolean).join(' · ') : t.targetId ? 'Uma mensagem só: marca nela.' : '';
+    };
+    ['#mOn', '#mAt'].forEach((k) => ($(k).onchange = upd));
+    targetSel.addEventListener('change', upd);
+    upd();
+    return () => {
+      const at = $('#mAt').value;
+      const list = String($('#mList').value || '').split(/[^\d]+/).map(Number).filter((x) => x > 0);
+      return { on: $('#mOn').checked, at, list: at === 'custom' ? list : [] };
+    };
+  }
+
   // ------------------------------------------------------------ ITENS
   const FILTER_INFO = {
     text: { title: 'Mensagens', sub: 'Textos prontos com variáveis. Envie com 1 clique ou digitando /atalho + Tab no WhatsApp.', types: ['text'], newType: 'text' },
@@ -475,6 +659,7 @@
       const meta = [ZF.typeLabel(i.type)];
       if (i.type === 'audio') meta.push(ZF.fmtDuration(i.duration));
       if (i.data) meta.push(dataUrlSizeKb(i.data) + ' KB');
+      else if (i.mediaKb) meta.push(i.mediaKb + ' KB');
       return meta.join(' · ');
     };
     const srch = (i) => esc(ZF.normalizeText([i.name, i.text, i.caption, i.shortcut, i.folder, i.filename].join(' ')));
@@ -531,7 +716,8 @@
     $$('[data-down]').forEach((b) => (b.onclick = () => moveIn('items', b.dataset.down, 1, inGroup, renderItems)));
     $$('[data-dup]').forEach((b) => (b.onclick = async () => {
       const src = DB.items.find((i) => i.id === b.dataset.dup);
-      DB.items.splice(DB.items.indexOf(src) + 1, 0, Object.assign({}, src, { id: ZF.uid(), name: src.name + ' (cópia)', shortcut: '' }));
+      const full = await ZF.withMedia(src); // a cópia leva o próprio arquivo
+      DB.items.splice(DB.items.indexOf(src) + 1, 0, Object.assign({}, full, { id: ZF.uid(), name: src.name + ' (cópia)', shortcut: '' }));
       await persist('items');
       renderItems();
     }));
@@ -542,7 +728,11 @@
     }));
   }
 
-  function editItem(item, newType) {
+  async function editItem(item, newType) {
+    if (item && item.hasMedia && !item.data) {
+      item = await ZF.withMedia(item); // carrega o arquivo só ao abrir para editar
+      if (!item.data) toast('Arquivo deste item não encontrado — envie de novo');
+    }
     const isNew = !item;
     item = item ? Object.assign({}, item) : { id: ZF.uid(), type: newType, name: '', text: '', caption: '', shortcut: '' };
     const typeSel = isNew
@@ -641,6 +831,8 @@
         item.text = $('#fText').value;
         if (!item.text.trim()) return toast('Escreva a mensagem');
         delete item.data;
+        delete item.hasMedia;
+        delete item.mediaKb;
       } else {
         if (!pending) return toast('Escolha um arquivo' + (item.type === 'audio' ? ' ou grave um áudio' : ''));
         Object.assign(item, pending);
@@ -1238,7 +1430,9 @@
     else {
       h += '<table><tr><th>Quando</th><th>Para</th><th>Envia</th><th>Repetir</th><th>Status</th><th></th></tr>';
       list.forEach((s) => {
-        h += `<tr><td>${fmtDate(s.at)}</td><td>${esc(s.numbers.slice(0, 3).join(', '))}${s.numbers.length > 3 ? ' +' + (s.numbers.length - 3) : ''}</td>
+        const to = s.numbers.slice(0, 3).map(esc).concat((s.groups || []).slice(0, 3).map((g) => '👥 ' + esc(g.name || 'grupo')));
+        const more = s.numbers.length + (s.groups || []).length - to.length;
+        h += `<tr><td>${fmtDate(s.at)}</td><td>${to.join(', ')}${more > 0 ? ' +' + more : ''}${s.mention && s.mention.on && (s.groups || []).length ? ' <span class="tag">👥 marca todos</span>' : ''}</td>
           <td>${esc(targetName(s.targetType, s.targetId))}</td><td>${{ none: '-', daily: 'Diário', weekly: 'Semanal' }[s.repeat || 'none']}</td>
           <td>${statusTag(s.status)}${s.lastError ? `<div class="hint" style="color:var(--red)">${esc(s.lastError)}</div>` : ''}</td>
           <td>${s.status === 'pending' ? `<button class="btn sm sec" data-pause="${s.id}">Pausar</button>` : s.status === 'paused' ? `<button class="btn sm" data-resume="${s.id}">Retomar</button>` : ''}
@@ -1269,19 +1463,29 @@
   function editSchedule(s) {
     if (!DB.items.length && !DB.funnels.length) return toast('Crie um item ou funil primeiro');
     const isNew = !s;
-    s = s ? Object.assign({}, s) : { id: ZF.uid(), numbers: [], at: Date.now() + 3600000, repeat: 'none', targetType: 'funnel', targetId: '', status: 'pending', useName: '' };
+    s = s ? Object.assign({}, s) : { id: ZF.uid(), numbers: [], groups: [], at: Date.now() + 3600000, repeat: 'none', targetType: 'funnel', targetId: '', status: 'pending', useName: '' };
     openModal(`<h2>${isNew ? 'Novo agendamento' : 'Editar agendamento'}</h2>
-      <label>Números (um por linha, com DDD)</label><textarea id="sNums" placeholder="11999998888">${esc(s.numbers.join('\n'))}</textarea>
+      <label>Números (um por linha, com DDD) — opcional se escolher grupos</label><textarea id="sNums" placeholder="11999998888">${esc(s.numbers.join('\n'))}</textarea>
       <div class="hint">Números brasileiros sem 55 recebem o 55 automaticamente.</div>
+      ${GROUP_BOX_HTML}
       <label>Nome para {nome} (opcional – se vazio usa o nome salvo no WhatsApp)</label><input type="text" id="sName" value="${esc(s.useName || '')}">
       <label>Enviar</label><select id="sTarget">${targetOptions(s.targetType, s.targetId)}</select>
       <div class="row2"><div><label>Data e hora</label><input type="datetime-local" id="sAt" value="${toLocalInput(s.at)}"></div>
       <div><label>Repetir</label><select id="sRep"><option value="none">Não repetir</option><option value="daily" ${s.repeat === 'daily' ? 'selected' : ''}>Todo dia</option><option value="weekly" ${s.repeat === 'weekly' ? 'selected' : ''}>Toda semana</option></select></div></div>
+      ${mentionHtml(s.mention)}
       <div class="modal-foot"><button class="btn sec" id="cancel">Cancelar</button><button class="btn" id="saveS">Salvar</button></div>`);
     $('#cancel').onclick = closeModal;
+    const getGroups = groupBox(s.groups);
+    const getMention = bindMention($('#sTarget'));
+    const showM = () => ($('#mBox').style.display = getGroups().length ? '' : 'none');
+    $('#grpBox').addEventListener('change', showM);
+    showM();
     $('#saveS').onclick = async () => {
       s.numbers = parseNumbers($('#sNums').value).map((c) => c.number);
-      if (!s.numbers.length) return toast('Informe ao menos um número válido');
+      s.groups = getGroups();
+      if (!s.numbers.length && !s.groups.length) return toast('Informe um número ou escolha um grupo');
+      s.mention = s.groups.length ? getMention() : null;
+      if (s.mention && s.mention.on && s.mention.at === 'custom' && !s.mention.list.length) return toast('Diga em quais mensagens marcar (ex: 2)');
       Object.assign(s, parseTarget($('#sTarget').value));
       if (!s.targetId) return toast('Escolha o que enviar');
       const at = new Date($('#sAt').value).getTime();
@@ -1798,6 +2002,7 @@
     };
     $('#exp').onclick = async () => {
       const data = await chrome.storage.local.get(['items', 'funnels', 'triggers', 'schedules', 'campaigns', 'settings', 'remarketing', 'rmktBlock', 'stats']);
+      data.items = await ZF.fullItems(data.items || []); // backup com as mídias dentro (formato de sempre)
       data.__zapfunil = 1;
       data.exportedAt = new Date().toISOString();
       const a = document.createElement('a');
@@ -1824,8 +2029,9 @@
         const c = Object.assign({}, x);
         delete c.noMedia;
         if (mine && mine.data) c.data = mine.data;
+        else if (mine && mine.hasMedia) Object.assign(c, { hasMedia: true, mediaKb: mine.mediaKb });
         return c;
-      }).filter((x) => x.type === 'text' || x.data);
+      }).filter((x) => x.type === 'text' || x.data || x.hasMedia);
       for (const k of ['items', 'funnels', 'triggers', 'schedules', 'campaigns', 'remarketing']) {
         const inc = data[k] || [];
         if (replace) out[k] = inc;

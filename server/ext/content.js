@@ -111,8 +111,11 @@
     const job = (locks[key] || Promise.resolve()).catch(() => {}).then(async () => {
       const data = await chrome.storage.local.get(key);
       const cur = data[key] || (ZF.OBJ_KEYS.includes(key) ? {} : []);
-      const next = fn(cur) || cur;
-      await chrome.storage.local.set({ [key]: next });
+      let next = fn(cur) || cur;
+      if (key === 'items') {
+        await ZF.save({ items: next }); // separa áudios/vídeos/imagens em chaves próprias
+        next = ZF.splitItems(next).items;
+      } else await chrome.storage.local.set({ [key]: next });
       if (DB) DB[key] = next;
       return next;
     });
@@ -309,6 +312,10 @@
   // opts.simSecs: quanto tempo simular (já descontado do intervalo do funil)
   async function sendItem(chatId, item, ctx, run, opts) {
     opts = opts || {};
+    if (item && item.type !== 'text') {
+      item = await ZF.withMedia(item);
+      if (!item.data) throw new Error('arquivo de "' + item.name + '" não encontrado — abra o item no painel e envie o arquivo de novo');
+    }
     const simulate = opts.simulate !== false;
     const secs = simulate ? (opts.simSecs != null ? opts.simSecs : simSeconds(item, ctx)) : 0;
     if (item.type === 'text') {
@@ -321,7 +328,7 @@
       }
       setPhase(run, 'enviando', 0);
       markBot(chatId);
-      await call('sendText', chatId, text);
+      await call('sendText', chatId, text, opts.mentionAll ? { mentionAll: true } : undefined);
       markBot(chatId);
     } else if (item.type === 'audio') {
       if (secs > 0.2) {
@@ -335,7 +342,8 @@
         type: 'audio',
         isPtt: item.asFile ? false : true,
         mimetype: item.mime || undefined,
-        filename: item.filename || undefined
+        filename: item.filename || undefined,
+        mentionAll: opts.mentionAll || undefined
       });
     } else {
       if (secs > 0.2) {
@@ -347,6 +355,7 @@
       const o = { type: item.type, caption: ZF.applyVars(item.caption || '', ctx) || undefined };
       if (item.mime) o.mimetype = item.mime;
       if (item.filename) o.filename = item.filename;
+      if (opts.mentionAll) o.mentionAll = true;
       if (item.type === 'image' || item.type === 'video') {
         if (item.viewOnce) o.isViewOnce = true;
       }
@@ -408,7 +417,10 @@
   async function execFunnel(chatId, funnel, ctx, source) {
     const isRmkt = /^remarketing/.test(source || '');
     if (!isRmkt) rmktOnOtherFunnel(chatId, funnelKey(funnel)).catch(() => {});
-    const run = { cancelled: false, label: funnel.name, step: 0, total: funnel.steps.length, name: ctx.name || chatId.replace(/@.*/, '') };
+    const run = { cancelled: false, label: funnel.name, step: 0, total: funnel.steps.length, name: ctx.name || chatId.replace(/@.*/, ''), msgN: 0 };
+    // marcar todos (oculto) em grupo: em quais mensagens (1ª, última, todas ou números escolhidos)
+    const mention = /@g\.us$/.test(chatId) && ctx.mention && ctx.mention.at && ctx.mention.at !== 'none' ? ctx.mention : null;
+    const lastIdx = funnel.steps.map((x) => !!(x.itemId && x.kind !== 'wait_reply')).lastIndexOf(true);
     running.set(chatId, run);
     renderRunning();
     let ok = true;
@@ -461,7 +473,15 @@
           sim = Math.min(sim, delay);
           if (delay - sim > 0) await wait((delay - sim) * 1000, run);
         }
-        await sendItem(chatId, item, ctx, run, { simulate, simSecs: sim });
+        run.msgN++;
+        let mentionAll = false;
+        if (mention) {
+          if (mention.at === 'all') mentionAll = true;
+          else if (mention.at === 'first') mentionAll = run.msgN === 1;
+          else if (mention.at === 'last') mentionAll = depth === 0 && i === lastIdx;
+          else if (mention.at === 'custom') mentionAll = (mention.list || []).map(Number).includes(run.msgN);
+        }
+        await sendItem(chatId, item, ctx, run, { simulate, simSecs: sim, mentionAll });
       }
       return 'done';
     };
@@ -571,14 +591,20 @@
         if (!funnel) errors.push('Funil/item não encontrado');
         else {
           // envia em sequência para não sobrecarregar
-          for (const num of s.numbers || []) {
+          const targets = (s.numbers || []).map((n) => ({ num: n })).concat((s.groups || []).map((g) => ({ group: g })));
+          for (const t of targets) {
             try {
-              const r = await call('resolve', num);
-              await runFunnel(r.id, funnel, { name: s.useName || r.name, number: r.id }, 'agendamento');
+              if (t.group) {
+                // grupo: manda direto no id do grupo; {nome} vira o nome do grupo
+                await runFunnel(t.group.id, funnel, { name: s.useName || t.group.name || '', number: t.group.id, mention: s.mention && s.mention.on ? s.mention : null }, 'agendamento');
+              } else {
+                const r = await call('resolve', t.num);
+                await runFunnel(r.id, funnel, { name: s.useName || r.name, number: r.id }, 'agendamento');
+              }
             } catch (e) {
-              errors.push(num + ': ' + e.message);
+              errors.push((t.group ? '👥 ' + (t.group.name || 'grupo') : t.num) + ': ' + e.message);
             }
-            if ((s.numbers || []).length > 1) await sleep(rand(4, 9) * 1000);
+            if (targets.length > 1) await sleep(rand(4, 9) * 1000);
           }
         }
         if (errors.length) notifyPhone('error', '❌ Agendamento com erro', errors.join(' | ').slice(0, 200), { tag: 'sch-' + s.id });
@@ -942,6 +968,8 @@
   // ---------------------------------------------------------------- UI: painel flutuante
   let root, listEl, runEl, statusDot, searchEl, fabCd, folderEl;
   let panelFolder = '';
+  let mentionEl = null;
+  let panelMention = { at: 'none', list: [] };
   let activeTab = 'all';
 
   function el(tag, attrs, children) {
@@ -1022,6 +1050,29 @@
       renderList();
     } });
     chrome.storage.local.get('panelFolder').then((d) => { panelFolder = d.panelFolder || ''; renderList(); });
+    // grupo aberto: marcar todos (oculto) nos envios manuais
+    const mSel = el('select', { class: 'zf-m-sel', onchange: () => saveMention() }, [['none', 'Não marcar'], ['first', 'Na 1ª mensagem'], ['last', 'Na última'], ['all', 'Em todas'], ['custom', 'Escolher…']].map(([v, t]) => el('option', { value: v, text: t })));
+    const mList = el('input', { class: 'zf-m-list', placeholder: 'ex: 2', oninput: () => saveMention() });
+    const saveMention = () => {
+      panelMention = { at: mSel.value, list: String(mList.value || '').split(/[^\d]+/).map(Number).filter((x) => x > 0) };
+      mList.style.display = mSel.value === 'custom' ? '' : 'none';
+      mentionEl.classList.toggle('zf-m-on', mSel.value !== 'none');
+      chrome.storage.local.set({ panelMention });
+    };
+    mentionEl = el('div', { class: 'zf-mention', title: 'Notifica todos os membros sem aparecer @ no texto' }, [el('span', { text: '👥 Marcar todos:' }), mSel, mList]);
+    mentionEl.style.display = 'none';
+    chrome.storage.local.get('panelMention').then((d) => {
+      if (d.panelMention) panelMention = d.panelMention;
+      mSel.value = panelMention.at || 'none';
+      mList.value = (panelMention.list || []).join(', ');
+      mList.style.display = mSel.value === 'custom' ? '' : 'none';
+      mentionEl.classList.toggle('zf-m-on', mSel.value !== 'none');
+    });
+    setInterval(async () => {
+      if (!root || !root.classList.contains('zf-open') || !waReady) return;
+      const chat = await call('activeChat').catch(() => null);
+      mentionEl.style.display = chat && chat.isGroup ? '' : 'none';
+    }, 1500);
     listEl = el('div', { class: 'zf-list' });
     runEl = el('div', { class: 'zf-running' });
 
@@ -1041,6 +1092,7 @@
       ]),
       searchEl,
       folderEl,
+      mentionEl,
       tabBar,
       runEl,
       listEl,
@@ -1266,7 +1318,9 @@
     const queued = running.has(chat.id);
     toast(queued ? '⏳ Na fila: ' + funnel.name : (r.kind === 'funnel' ? 'Funil iniciado: ' : 'Enviando: ') + funnel.name);
     try {
-      await runFunnel(chat.id, funnel, { name: chat.name, number: chat.id }, 'manual');
+      const ctx = { name: chat.name, number: chat.id };
+      if (chat.isGroup && panelMention.at && panelMention.at !== 'none') ctx.mention = panelMention;
+      await runFunnel(chat.id, funnel, ctx, 'manual');
     } catch (e) {
       if (e.message !== 'Cancelado') toast('Erro: ' + e.message, 'err');
     }
@@ -1924,6 +1978,19 @@
       const busy = running.size > 0 || Array.from(queues.values()).some((q) => q && q.length) || !!(rmktBusy || campaignBusy || schedulerBusy);
       sendResponse({ waReady, busy, state, qr, local: localLeader });
       return;
+    }
+    if (msg.type === 'zf:groups') {
+      if (!waReady) {
+        sendResponse({ error: 'WhatsApp ainda carregando' });
+        return;
+      }
+      call('listGroups')
+        .then(async (list) => {
+          list.sort((a, b) => a.name.localeCompare(b.name, 'pt-BR'));
+          await chrome.storage.local.set({ waGroups: { at: Date.now(), list } });
+          sendResponse({ list });
+        }, (e) => sendResponse({ error: e.message || String(e) }));
+      return true;
     }
     if (msg.type === 'zf:linkcode') {
       call('linkCode', msg.phone)

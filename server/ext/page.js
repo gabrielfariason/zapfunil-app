@@ -70,6 +70,20 @@
     }
   }
 
+  // "marcar todos" sem @ no texto: a menção vai escondida, todo mundo é notificado
+  const memberCache = new Map();
+  async function mentionList(chatId, opts) {
+    if (!opts || !opts.mentionAll || !/@g\.us$/.test(chatId)) return null;
+    const c = memberCache.get(chatId);
+    if (c && Date.now() - c.at < 10 * 60000) return c.ids;
+    let me = '';
+    try { me = wid(WPP.conn.getMyUserId()); } catch (e) {}
+    const ps = await WPP.group.getParticipants(chatId);
+    const ids = (ps || []).map((p) => wid(p.id)).filter((x) => x && x !== me);
+    memberCache.set(chatId, { at: Date.now(), ids });
+    return ids;
+  }
+
   async function resolveChatId(target) {
     // target pode ser "5511999999999", "5511999999999@c.us" ou id de grupo "...@g.us"
     if (!target) throw new Error('Contato vazio');
@@ -162,15 +176,32 @@
       try { await WPP.chat.markIsPaused(chatId); } catch (e) {}
       return true;
     },
-    async sendText(chatId, text) {
-      const r = await WPP.chat.sendTextMessage(chatId, text, { createChat: true, linkPreview: true });
+    async sendText(chatId, text, opts) {
+      const o = { createChat: true, linkPreview: true };
+      const ml = await mentionList(chatId, opts);
+      if (ml) o.mentionedList = ml;
+      const r = await WPP.chat.sendTextMessage(chatId, text, o);
       return { id: wid(r && r.id) };
     },
     async sendFile(chatId, dataUrl, opts) {
       const o = Object.assign({ createChat: true }, opts || {});
+      const ml = await mentionList(chatId, o);
+      delete o.mentionAll;
+      if (ml) o.mentionedList = ml;
       if (o.type === 'audio' && o.isPtt) o.waveform = true;
       const r = await WPP.chat.sendFileMessage(chatId, cleanDataUrl(dataUrl), o);
       return { id: wid(r && r.id) };
+    },
+    // grupos em que você está (para agendar/disparar)
+    async listGroups() {
+      const chats = await WPP.chat.list({ onlyGroups: true });
+      return chats.slice(0, 1000).map((c) => {
+        let size = 0;
+        try { size = (c.groupMetadata && c.groupMetadata.participants && (c.groupMetadata.participants.length || c.groupMetadata.participants.getModelsArray().length)) || 0; } catch (e) {}
+        let ro = false;
+        try { ro = !!(c.groupMetadata && c.groupMetadata.announce && !c.groupMetadata.participants.iAmAdmin()); } catch (e) {}
+        return { id: wid(c.id), name: c.formattedTitle || c.name || (c.groupMetadata && c.groupMetadata.subject) || '', size, onlyAdmins: ro };
+      }).filter((g) => /@g\.us$/.test(g.id));
     },
     async listChats() {
       const chats = await WPP.chat.list({ onlyUsers: true });

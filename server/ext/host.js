@@ -112,6 +112,14 @@ const ZFHost = (() => {
     return out;
   }
   async function setLocal(k, v) {
+    if (k === 'items' && Array.isArray(v)) {
+      // mídia vai para a chave própria; a lista fica leve
+      const sp = ZF.splitItems(v);
+      applied[k] = JSON.stringify(sp.items);
+      if (Object.keys(sp.media).length) await chrome.storage.local.set(sp.media);
+      await chrome.storage.local.set({ items: sp.items });
+      return;
+    }
     applied[k] = JSON.stringify(v === undefined ? null : v);
     await chrome.storage.local.set({ [k]: v });
   }
@@ -180,7 +188,9 @@ const ZFHost = (() => {
       if (k === 'items' && Array.isArray(v)) {
         const ids = v.map((i) => i.id);
         rows.push({ key: 'items', value: { ids }, host: me.id });
-        for (const it of v) {
+        // na nuvem cada item vai completo (com a mídia), no mesmo formato de sempre
+        const full = await ZF.fullItems(v);
+        for (const it of full) {
           const h = hash(JSON.stringify(it));
           if (S.hashes[it.id] !== h) {
             rows.push({ key: 'items#' + it.id, value: it, host: me.id });

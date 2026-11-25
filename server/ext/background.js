@@ -1,4 +1,4 @@
-importScripts('config.js', 'remote.js', 'host.js');
+importScripts('common.js', 'config.js', 'remote.js', 'host.js');
 
 // Clique no ícone abre o painel de controle
 chrome.action.onClicked.addListener(() => {
@@ -26,6 +26,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .then(fn)
       .then((data) => sendResponse({ ok: true, data }))
       .catch((e) => sendResponse({ ok: false, error: e.message || String(e) }));
+    return true;
+  }
+  // painel pede a lista de grupos: pergunta para a aba do WhatsApp
+  if (msg && msg.type === 'wa:groups') {
+    chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }).then(async (tabs) => {
+      let last = 'Abra o WhatsApp Web neste Chrome para carregar os grupos';
+      for (const t of tabs) {
+        try {
+          const r = await chrome.tabs.sendMessage(t.id, { type: 'zf:groups' });
+          if (r && r.list) return sendResponse(r);
+          if (r && r.error) last = r.error;
+        } catch (e) {}
+      }
+      sendResponse({ error: last });
+    });
     return true;
   }
   if (msg && msg.type === 'openDashboard') {
@@ -180,6 +195,7 @@ async function autoBackup(force) {
   const id = Date.now().toString(36);
   try {
     const data = await chrome.storage.local.get(BK_KEYS);
+    data.items = await ZF.fullItems(data.items || []); // backup no formato de sempre (mídia dentro do item)
     if (!force && !(data.items || []).length && !(data.funnels || []).length) return { ok: false, skipped: true };
     if (!cfg.includeMedia) {
       data.items = (data.items || []).map((i) => {
@@ -237,3 +253,59 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 });
+
+// ------------------------------------------------------------ mídias separadas: migração e limpeza
+// 1) itens antigos com a mídia dentro → backup automático primeiro, depois separa (nada é apagado)
+// 2) mídia sem item (item excluído) só é apagada se continuar órfã em duas verificações seguidas (1h+ de intervalo)
+let migBusy = false;
+async function migrateMedia() {
+  if (migBusy) return;
+  migBusy = true;
+  try {
+    const { items, mediaMigratedAt } = await chrome.storage.local.get(['items', 'mediaMigratedAt']);
+    if (!Array.isArray(items) || !items.some((i) => i && i.data)) return;
+    const d = await chrome.storage.local.get(['hostKind']);
+    if (!mediaMigratedAt && d.hostKind !== 'server') {
+      const r = await autoBackup(true).catch((e) => ({ ok: false, error: e.message }));
+      await chrome.storage.local.set({ mediaMigrationBackup: r && r.ok ? (r.file || 'ok') : 'falhou: ' + ((r && r.error) || '?') });
+    }
+    // relê (pode ter mudado durante o backup) e separa
+    const cur = (await chrome.storage.local.get('items')).items || [];
+    const sp = ZF.splitItems(cur);
+    if (!Object.keys(sp.media).length) return;
+    await chrome.storage.local.set(sp.media);
+    // confere antes de tirar a mídia da lista
+    const back = await chrome.storage.local.get(Object.keys(sp.media));
+    for (const [k, v] of Object.entries(sp.media)) if (back[k] !== v) throw new Error('conferência falhou em ' + k);
+    const again = (await chrome.storage.local.get('items')).items || [];
+    if (JSON.stringify(again) !== JSON.stringify(cur)) return; // mudou no meio: tenta na próxima
+    await chrome.storage.local.set({ items: sp.items, mediaMigratedAt: Date.now() });
+  } catch (e) {
+    chrome.storage.local.set({ mediaMigrationError: String(e.message || e) }).catch(() => {});
+  } finally {
+    migBusy = false;
+  }
+}
+async function mediaGc() {
+  try {
+    const keys = chrome.storage.local.getKeys ? await chrome.storage.local.getKeys() : Object.keys(await chrome.storage.local.get(null));
+    const { items, mediaOrphans } = await chrome.storage.local.get(['items', 'mediaOrphans']);
+    const used = new Set((items || []).map((i) => ZF.mediaKey(i.id)));
+    const orphans = keys.filter((k) => k.startsWith(ZF.MEDIA) && !used.has(k));
+    const prev = (mediaOrphans && mediaOrphans.keys) || [];
+    const ripe = Date.now() - ((mediaOrphans && mediaOrphans.at) || 0) > 50 * 60000;
+    const del = ripe ? orphans.filter((k) => prev.includes(k)) : [];
+    if (del.length) await chrome.storage.local.remove(del);
+    if (ripe || !mediaOrphans) await chrome.storage.local.set({ mediaOrphans: { at: Date.now(), keys: orphans.filter((k) => !del.includes(k)) } });
+  } catch (e) {}
+}
+setTimeout(() => migrateMedia().then(mediaGc), 4000);
+// se alguém gravar a lista com mídia dentro (versão antiga aberta, importação…), separa logo depois
+let migT = null;
+chrome.storage.onChanged.addListener((ch, area) => {
+  if (area !== 'local' || !ch.items || !Array.isArray(ch.items.newValue)) return;
+  if (!ch.items.newValue.some((i) => i && i.data)) return;
+  clearTimeout(migT);
+  migT = setTimeout(() => migrateMedia(), 3000);
+});
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'zfBackup') migrateMedia().then(mediaGc); });

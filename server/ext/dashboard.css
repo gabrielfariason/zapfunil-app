@@ -147,3 +147,27 @@ audio.mplayer { width: 100%; height: 36px; }
 .hbar .l { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .rep2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 @media (max-width: 900px) { .rep2 { grid-template-columns: 1fr; } }
+
+/* ---- 1.10: seletor de mensagem, grupos */
+.pk-hidden { position: absolute !important; opacity: 0 !important; pointer-events: none !important; width: 1px !important; height: 1px !important; margin: 0 !important; padding: 0 !important; }
+.pk-btn { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 8px 12px; background: var(--card2); color: var(--ink); border: 1px solid var(--line); border-radius: 10px; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.pk-btn:hover { border-color: rgba(242, 182, 50, .45); }
+.pk-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pk-caret { margin-left: auto; color: var(--mute); }
+.pk-pop { position: fixed; z-index: 60; background: var(--card); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow-lg); padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.pk-kinds { display: flex; gap: 5px; flex-wrap: wrap; }
+.pk-kinds .chip { padding: 4px 9px; font-size: 12px; }
+.pk-list { overflow-y: auto; flex: 1; min-height: 80px; display: flex; flex-direction: column; gap: 2px; }
+.pk-row { display: flex; gap: 10px; align-items: flex-start; text-align: left; background: none; border: 0; border-radius: 9px; padding: 7px 9px; color: var(--ink); font: inherit; cursor: pointer; }
+.pk-row:hover { background: var(--card2); }
+.pk-row.on { background: var(--acc-soft); }
+.pk-ic { font-size: 16px; line-height: 20px; }
+.pk-main { display: flex; flex-direction: column; min-width: 0; font-size: 13.5px; }
+.pk-main small { color: var(--mute); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.grp-list { max-height: 210px; overflow-y: auto; margin: 8px 0 4px; display: flex; flex-direction: column; gap: 2px; }
+.grp-row { display: flex; align-items: center; gap: 8px; padding: 6px 6px; border-radius: 8px; cursor: pointer; margin: 0; font-weight: 400; }
+.grp-row:hover { background: var(--card2); }
+.grp-row small { color: var(--mute); margin-left: auto; font-size: 12px; }
+.grp-row small + small { margin-left: 8px; }
+.pk-t { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pk-t b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
