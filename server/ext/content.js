@@ -77,6 +77,7 @@
       updateStatus();
     }
     if (d.event === 'message') onIncoming(d.data);
+    if (d.event === 'groupJoin') gOnJoin(d.data);
     if (d.event === 'logout') notifyPhone('error', '⚠️ WhatsApp Web desconectou', 'Abra o WhatsApp Web no Mac e escaneie o QR code de novo. Enquanto isso nada é enviado.', { tag: 'zf-logout' });
   });
 
@@ -328,7 +329,7 @@
       }
       setPhase(run, 'enviando', 0);
       markBot(chatId);
-      await call('sendText', chatId, text, opts.mentionAll ? { mentionAll: true } : undefined);
+      await call('sendText', chatId, text, opts.mentionAll || opts.mentionIds ? { mentionAll: !!opts.mentionAll, mentionIds: opts.mentionIds } : undefined);
       markBot(chatId);
     } else if (item.type === 'audio') {
       if (secs > 0.2) {
@@ -343,7 +344,8 @@
         isPtt: item.asFile ? false : true,
         mimetype: item.mime || undefined,
         filename: item.filename || undefined,
-        mentionAll: opts.mentionAll || undefined
+        mentionAll: opts.mentionAll || undefined,
+        mentionIds: opts.mentionIds || undefined
       });
     } else {
       if (secs > 0.2) {
@@ -356,6 +358,7 @@
       if (item.mime) o.mimetype = item.mime;
       if (item.filename) o.filename = item.filename;
       if (opts.mentionAll) o.mentionAll = true;
+      else if (opts.mentionIds) o.mentionIds = opts.mentionIds;
       if (item.type === 'image' || item.type === 'video') {
         if (item.viewOnce) o.isViewOnce = true;
       }
@@ -456,7 +459,7 @@
           continue;
         }
         const delay = Math.max(0, Number(st.delay) || 0);
-        const item = getItem(st.itemId);
+        const item = st.inline || getItem(st.itemId); // posts de grupo podem ter texto escrito direto no post
         if (!item) {
           if (delay) await wait(delay * 1000, run);
           continue; // item apagado – pula
@@ -481,7 +484,10 @@
           else if (mention.at === 'last') mentionAll = depth === 0 && i === lastIdx;
           else if (mention.at === 'custom') mentionAll = (mention.list || []).map(Number).includes(run.msgN);
         }
-        await sendItem(chatId, item, ctx, run, { simulate, simSecs: sim, mentionAll });
+        if (st.mention && /@g\.us$/.test(chatId)) mentionAll = true; // "@ todos" marcado nesta mensagem do post
+        // boas-vindas / palavra-chave: marca só quem entrou / quem perguntou, na 1ª mensagem
+        const mentionIds = !mentionAll && run.msgN === 1 && ctx.mentionIds && ctx.mentionIds.length ? ctx.mentionIds : undefined;
+        await sendItem(chatId, item, ctx, run, { simulate, simSecs: sim, mentionAll, mentionIds });
       }
       return 'done';
     };
@@ -531,6 +537,7 @@
       const waiters = replyWaiters.get(m.chatId);
       if (waiters && waiters.length) waiters.slice().forEach((f) => f());
     }
+    if (isLeader && m.isGroup && !m.fromMe) gOnMessage(m);
     if (isLeader) {
       try {
         // respostas sempre contam para cancelar remarketing, mesmo com automações pausadas
@@ -573,6 +580,177 @@
         }
       })();
       break; // só um gatilho por mensagem
+    }
+  }
+
+  // ---------------------------------------------------------------- GRUPOS (aba própria)
+  // Posts = sequência de mensagens só para grupo (texto escrito no post, itens/funis do acervo, "@ todos" por mensagem).
+  // Programação semanal com vários horários, listas de grupos, boas-vindas e resposta por palavra-chave.
+  const WEEK = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sab'];
+  function gTargets(t) {
+    const map = new Map();
+    t = t || {};
+    (t.groups || []).forEach((g) => g && g.id && map.set(g.id, g));
+    (t.lists || []).forEach((lid) => {
+      const l = (DB.gLists || []).find((x) => x.id === lid);
+      (l ? l.groups || [] : []).forEach((g) => g && g.id && map.set(g.id, g));
+    });
+    return Array.from(map.values());
+  }
+  function gTargetHas(t, groupId) {
+    if (!t) return false;
+    if (t.all) return true;
+    return gTargets(t).some((g) => g.id === groupId);
+  }
+  function postToFunnel(post) {
+    const steps = [];
+    for (const p of post.parts || []) {
+      const delay = Math.max(0, Number(p.delay) || 0);
+      if (p.kind === 'text') {
+        if (!String(p.text || '').trim()) continue;
+        steps.push({ inline: { id: 'inline', type: 'text', name: 'texto do post', text: p.text }, delay, simulate: p.simulate !== false, mention: !!p.mention });
+      } else if (p.kind === 'item') {
+        steps.push({ itemId: p.itemId, delay, simulate: p.simulate !== false, mention: !!p.mention });
+      } else if (p.kind === 'funnel') {
+        const f = getFunnel(p.funnelId);
+        if (!f) continue;
+        let first = true;
+        f.steps.forEach((st, i) => {
+          if (st.kind === 'wait_reply' || !st.itemId) return;
+          // o intervalo do post vale antes da 1ª mensagem do funil; depois seguem os intervalos do próprio funil
+          steps.push(Object.assign({}, st, { delay: first ? delay : st.delay, mention: first && !!p.mention }));
+          first = false;
+        });
+      }
+    }
+    return { id: 'post-' + post.id, name: '👥 ' + post.name, steps };
+  }
+  function getPost(id) {
+    return (DB.gPosts || []).find((p) => p.id === id) || null;
+  }
+  async function sendPostToGroups(post, groups, source, extra) {
+    const fn = postToFunnel(post);
+    const errors = [];
+    if (!fn.steps.length) throw new Error('o post "' + post.name + '" está vazio');
+    for (let i = 0; i < groups.length; i++) {
+      const g = groups[i];
+      try {
+        await runFunnel(g.id, fn, Object.assign({ name: g.name || '', group: g.name || '', number: g.id }, extra || {}), source);
+      } catch (e) {
+        errors.push((g.name || 'grupo') + ': ' + e.message);
+      }
+      if (i < groups.length - 1) await sleep(rand(5, 12) * 1000);
+    }
+    return errors;
+  }
+  // horários vencidos de uma programação
+  function gDue(s, now) {
+    const out = [];
+    if (s.mode === 'once') {
+      if (s.at && s.at <= now && !s.doneAt) out.push({ key: 'once', late: false });
+      return out;
+    }
+    const lateMs = Math.max(5, Number(s.lateMin) || 120) * 60000;
+    for (const back of [0, 1]) {
+      const d = new Date(now - back * 86400000);
+      if (!(s.days || []).includes(d.getDay())) continue;
+      for (const hm of s.times || []) {
+        const [h, m] = String(hm).split(':').map(Number);
+        if (!Number.isFinite(h)) continue;
+        const at = new Date(d.getFullYear(), d.getMonth(), d.getDate(), h, m || 0).getTime();
+        if (at > now) continue;
+        if (s.createdAt && at < s.createdAt) continue;
+        const key = ZF.dayKey(at) + ' ' + hm;
+        if ((s.done || {})[key]) continue;
+        out.push({ key, late: now - at > lateMs });
+      }
+    }
+    return out;
+  }
+  let gBusy = false;
+  async function gTick() {
+    if (!isLeader || !waReady || gBusy || !DB || !autoOn()) return;
+    gBusy = true;
+    try {
+      const now = Date.now();
+      for (const s of (DB.gSchedules || []).slice()) {
+        if (!s.enabled) continue;
+        const due = gDue(s, now);
+        if (!due.length) continue;
+        // marca antes de enviar (nunca duplica, mesmo se a aba fechar no meio)
+        await mutate('gSchedules', (list) => list.map((x) => {
+          if (x.id !== s.id) return x;
+          const y = Object.assign({}, x, { done: Object.assign({}, x.done || {}) });
+          due.forEach((d) => (y.done[d.key] = d.late ? -1 : now));
+          if (s.mode === 'once') y.doneAt = now;
+          const cut = ZF.dayKey(now - 9 * 86400000);
+          Object.keys(y.done).forEach((k) => { if (k !== 'once' && k < cut) delete y.done[k]; });
+          return y;
+        }));
+        if (!due.some((d) => !d.late)) {
+          await mutate('gSchedules', (list) => list.map((x) => (x.id === s.id ? Object.assign({}, x, { last: { at: now, ok: false, err: 'WhatsApp estava fechado no horário (passou do atraso máximo) — pulado' } }) : x)));
+          continue;
+        }
+        const post = getPost(s.postId);
+        const groups = gTargets(s.targets);
+        let errs = [];
+        if (!post) errs = ['post apagado'];
+        else if (!groups.length) errs = ['nenhum grupo escolhido'];
+        else errs = await sendPostToGroups(post, groups, 'grupo: programação');
+        await mutate('gSchedules', (list) => list.map((x) => (x.id === s.id ? Object.assign({}, x, { last: { at: Date.now(), ok: !errs.length, err: errs.join(' · ') } }) : x)));
+        if (errs.length) notifyPhone('error', '❌ Post de grupo falhou', (post ? post.name : 'post') + ': ' + errs.join(' · '), { tag: 'gsch-' + s.id });
+      }
+    } catch (e) {
+      console.warn('[ZapFunil] grupos', e);
+    } finally {
+      gBusy = false;
+    }
+  }
+  // boas-vindas: junta quem entrou num intervalo curto e manda uma vez só
+  const gJoinBuf = new Map();
+  function gOnJoin(e) {
+    if (!isLeader || !DB || !autoOn()) return;
+    const w = (DB.gAuto || {}).welcome;
+    if (!w || !w.enabled || !w.postId || !gTargetHas(w.targets, e.groupId)) return;
+    const b = gJoinBuf.get(e.groupId) || { ids: [], names: [], t: null };
+    e.participants.forEach((p, i) => { if (!b.ids.includes(p)) { b.ids.push(p); b.names.push(e.names[i] || ''); } });
+    clearTimeout(b.t);
+    b.t = setTimeout(async () => {
+      gJoinBuf.delete(e.groupId);
+      const post = getPost(w.postId);
+      if (!post) return;
+      const g = await call('listGroups').then((l) => l.find((x) => x.id === e.groupId)).catch(() => null);
+      const names = b.names.filter(Boolean);
+      sendPostToGroups(post, [{ id: e.groupId, name: (g && g.name) || '' }], 'grupo: boas-vindas', {
+        member: names.length ? names.join(', ') : '',
+        mentionIds: w.mentionNew !== false ? b.ids : undefined
+      }).catch(() => {});
+    }, Math.max(3, Number(w.waitSec) || 20) * 1000);
+    gJoinBuf.set(e.groupId, b);
+  }
+  // palavra-chave dentro do grupo
+  const gKwLast = new Map();
+  function gOnMessage(m) {
+    if (!isLeader || !DB || !autoOn() || m.fromMe || !m.isGroup || m.type !== 'chat') return;
+    if (m.t && Date.now() / 1000 - m.t > 180) return;
+    const text = ZF.normalizeText(m.body || '');
+    if (!text) return;
+    for (const r of (DB.gAuto || {}).keywords || []) {
+      if (!r.enabled || !r.postId || !gTargetHas(r.targets, m.chatId)) continue;
+      const words = String(r.words || '').split(',').map((w) => ZF.normalizeText(w).trim()).filter(Boolean);
+      const hit = words.some((w) => (r.match === 'exact' ? text === w : r.match === 'starts' ? text.startsWith(w) : (' ' + text + ' ').includes(w)));
+      if (!hit) continue;
+      const k = r.id + '|' + m.chatId;
+      const cd = Math.max(0, Number(r.cooldownMin) || 10) * 60000;
+      if (Date.now() - (gKwLast.get(k) || 0) < cd) continue;
+      gKwLast.set(k, Date.now());
+      const post = getPost(r.postId);
+      if (!post) continue;
+      sendPostToGroups(post, [{ id: m.chatId, name: m.name || '' }], 'grupo: palavra-chave', {
+        member: m.authorName || '',
+        mentionIds: r.mentionSender !== false && m.author ? [m.author] : undefined
+      }).catch(() => {});
+      break;
     }
   }
 
@@ -663,12 +841,23 @@
     return (campaigns || []).find((c) => c.id === id);
   }
 
+  // variações do disparo: cada contato recebe uma, na ordem (A, B, C, A, B…)
+  const VLETTER = (i) => String.fromCharCode(65 + (i % 26)) + (i >= 26 ? Math.floor(i / 26) : '');
+  function campVariants(camp) {
+    return (camp.variants || []).filter((v) => (v.kind === 'text' ? String(v.text || '').trim() : v.itemId || v.funnelId));
+  }
+  function variantFunnel(camp, v, i) {
+    if (v.kind === 'text') return { id: 'camp-' + camp.id + '-' + i, name: camp.name + ' · variação ' + VLETTER(i), steps: [{ inline: { id: 'inline', type: 'text', name: 'variação ' + VLETTER(i), text: v.text }, delay: 0, simulate: true }] };
+    if (v.kind === 'funnel') return getFunnel(v.funnelId);
+    const it = getItem(v.itemId);
+    return it ? funnelFromItem(it) : null;
+  }
   async function processCampaign(id) {
     let camp = await getCampaign(id);
     if (!camp) return;
-    const funnel = targetToFunnel(camp.targetType || 'funnel', camp.targetId || camp.funnelId);
-    if (!funnel) {
-      await mutate('campaigns', (arr) => arr.map((c) => (c.id === id ? Object.assign({}, c, { status: 'error', lastError: 'Funil/item não encontrado' }) : c)));
+    const base = targetToFunnel(camp.targetType || 'funnel', camp.targetId || camp.funnelId);
+    if (!campVariants(camp).length && !base) {
+      await mutate('campaigns', (arr) => arr.map((c) => (c.id === id ? Object.assign({}, c, { status: 'error', lastError: 'Nenhuma mensagem para enviar (crie uma variação)' }) : c)));
       return;
     }
     let sentSincePause = 0;
@@ -683,7 +872,15 @@
       }
       const contact = camp.contacts[idx];
       const result = { number: contact.number, name: contact.name || '', ok: false, err: '', t: Date.now() };
+      const vars = campVariants(camp);
+      let funnel = base;
+      if (vars.length) {
+        const vi = idx % vars.length;
+        result.v = VLETTER(vi);
+        funnel = variantFunnel(camp, vars[vi], vi);
+      }
       try {
+        if (!funnel) throw new Error('mensagem da variação ' + (result.v || '') + ' foi apagada');
         const r = await call('resolve', contact.number);
         await runFunnel(r.id, funnel, { name: contact.name || r.name, number: r.id }, 'campanha: ' + camp.name);
         result.ok = true;
@@ -970,6 +1167,7 @@
   let panelFolder = '';
   let mentionEl = null;
   let panelMention = { at: 'none', list: [] };
+  let activeGroup = null; // grupo aberto agora (para mostrar os posts de grupo no ⚡)
   let activeTab = 'all';
 
   function el(tag, attrs, children) {
@@ -1072,6 +1270,11 @@
       if (!root || !root.classList.contains('zf-open') || !waReady) return;
       const chat = await call('activeChat').catch(() => null);
       mentionEl.style.display = chat && chat.isGroup ? '' : 'none';
+      const g = chat && chat.isGroup ? chat.id : null;
+      if (g !== (activeGroup && activeGroup.id)) {
+        activeGroup = g ? chat : null;
+        renderList();
+      }
     }, 1500);
     listEl = el('div', { class: 'zf-list' });
     runEl = el('div', { class: 'zf-running' });
@@ -1148,6 +1351,28 @@
     }
     const inFolder = (o) => !fl.length || !panelFolder || (panelFolder === '__none' ? !String(o.folder || '').trim() : String(o.folder || '').trim() === panelFolder);
     if (activeTab === 'rmkt') return renderRmktTab(q);
+    // grupo aberto: posts de grupo primeiro
+    let shownPosts = 0;
+    if (activeGroup && activeTab === 'all') {
+      const posts = (DB.gPosts || []).filter((p) => !q || ZF.normalizeText(p.name).includes(q));
+      if (posts.length) {
+        listEl.appendChild(el('div', { class: 'zf-group', text: '👥 Envios de grupo salvos' }));
+        shownPosts = posts.length;
+        posts.forEach((p) => {
+          const parts = p.parts || [];
+          const sub = parts.length + ' mensagem(ns)' + (parts.some((x) => x.mention) ? ' · @ todos' : '');
+          listEl.appendChild(el('button', { class: 'zf-row zf-row-post', title: 'Enviar este post no grupo aberto', onclick: async () => {
+            const chat = await call('activeChat').catch(() => null);
+            if (!chat || !chat.isGroup) return toast('Abra o grupo primeiro', 'warn');
+            toast('👥 Enviando "' + p.name + '" em ' + (chat.name || 'grupo') + '…');
+            sendPostToGroups(p, [{ id: chat.id, name: chat.name || '' }], 'grupo: manual').then((errs) => errs.length && toast('❌ ' + errs.join(' · '), 'warn')).catch((e) => toast('❌ ' + e.message, 'warn'));
+          } }, [
+            el('span', { class: 'zf-row-icon', text: '👥' }),
+            el('span', { class: 'zf-row-main' }, [el('span', { class: 'zf-row-name', text: p.name }), el('span', { class: 'zf-row-sub', text: sub })])
+          ]));
+        });
+      }
+    }
     const rows = [];
     if (activeTab === 'all' || activeTab === 'funnel') {
       DB.funnels.forEach((f) => rows.push({ kind: 'funnel', obj: f }));
@@ -1168,6 +1393,7 @@
         return ZF.normalizeText([o.name, o.shortcut, o.text, o.caption, o.folder].join(' ')).includes(q);
       })
       .sort((a, b) => a.g - b.g || a.i - b.i);
+    if (!filtered.length && shownPosts) return;
     if (!filtered.length) {
       listEl.appendChild(el('div', { class: 'zf-empty' }, [
         DB.items.length || DB.funnels.length ? 'Nada encontrado.' : 'Nenhum item ainda. ',
@@ -1975,9 +2201,45 @@
           qr = qrEl.toDataURL('image/png');
         } catch (e) {}
       }
-      const busy = running.size > 0 || Array.from(queues.values()).some((q) => q && q.length) || !!(rmktBusy || campaignBusy || schedulerBusy);
+      const busy = running.size > 0 || Array.from(queues.values()).some((q) => q && q.length) || !!(rmktBusy || campaignBusy || schedulerBusy || gBusy);
       sendResponse({ waReady, busy, state, qr, local: localLeader });
       return;
+    }
+    if (msg.type === 'zf:gtick') {
+      if (!isLeader || !waReady || !DB) {
+        sendResponse({ notReady: true });
+        return;
+      }
+      setTimeout(() => gTick(), 300);
+      sendResponse({ ok: true });
+      return;
+    }
+    if (msg.type === 'zf:gsend') {
+      if (!isLeader || !waReady || !DB) {
+        sendResponse({ notReady: true });
+        return;
+      }
+      const post = getPost(msg.postId);
+      if (!post) {
+        sendResponse({ error: 'post não encontrado' });
+        return;
+      }
+      const groups = msg.groups && msg.groups.length ? msg.groups : gTargets(msg.targets);
+      if (!groups.length) {
+        sendResponse({ error: 'escolha pelo menos um grupo' });
+        return;
+      }
+      sendPostToGroups(post, groups, 'grupo: enviar agora').catch(() => {});
+      sendResponse({ ok: true, n: groups.length });
+      return;
+    }
+    if (msg.type === 'zf:gmembers') {
+      if (!waReady) {
+        sendResponse({ error: 'WhatsApp ainda carregando' });
+        return;
+      }
+      call('groupMembers', msg.groupId).then((r) => sendResponse(r), (e) => sendResponse({ error: e.message || String(e) }));
+      return true;
     }
     if (msg.type === 'zf:groups') {
       if (!waReady) {
@@ -2030,6 +2292,7 @@
     every(updateCountdowns, 1000);
     every(heartbeat, 10000);
     every(schedulerTick, 15000);
+    every(gTick, 20000);
     every(campaignTick, 5000);
     every(rmktTick, 10000);
     try {
@@ -2037,6 +2300,7 @@
       waReady = true;
       updateStatus();
       schedulerTick();
+      gTick();
       campaignTick();
       rmktTick();
     } catch (e) {

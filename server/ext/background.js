@@ -43,6 +43,46 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     });
     return true;
   }
+  if (msg && msg.type === 'wa:gmembers') {
+    chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }).then(async (tabs) => {
+      let last = 'Abra o WhatsApp Web neste Chrome para puxar os membros';
+      for (const t of tabs) {
+        try {
+          const r = await chrome.tabs.sendMessage(t.id, { type: 'zf:gmembers', groupId: msg.groupId });
+          if (r && r.members) return sendResponse(r);
+          if (r && r.error) last = r.error;
+        } catch (e) {}
+      }
+      sendResponse({ error: last });
+    });
+    return true;
+  }
+  if (msg && msg.type === 'wa:gtick') {
+    chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }).then(async (tabs) => {
+      for (const t of tabs) {
+        try {
+          const r = await chrome.tabs.sendMessage(t.id, { type: 'zf:gtick' });
+          if (r && r.ok) return sendResponse(r);
+        } catch (e) {}
+      }
+      sendResponse({ ok: false });
+    });
+    return true;
+  }
+  if (msg && msg.type === 'wa:gsend') {
+    chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }).then(async (tabs) => {
+      let last = 'Abra o WhatsApp Web neste Chrome para enviar';
+      for (const t of tabs) {
+        try {
+          const r = await chrome.tabs.sendMessage(t.id, { type: 'zf:gsend', postId: msg.postId, groups: msg.groups, targets: msg.targets });
+          if (r && r.ok) return sendResponse(r);
+          if (r && r.error) last = r.error;
+        } catch (e) {}
+      }
+      sendResponse({ error: last });
+    });
+    return true;
+  }
   if (msg && msg.type === 'openDashboard') {
     chrome.tabs.create({ url: chrome.runtime.getURL('dashboard.html' + (msg.hash || '')) });
   }
@@ -158,7 +198,7 @@ async function remoteCycle(tabs) {
 }
 
 // ------------------------------------------------------------ backup automático (vai para Downloads/ZapFunil-backups)
-const BK_KEYS = ['items', 'funnels', 'triggers', 'schedules', 'campaigns', 'settings', 'remarketing', 'rmktBlock', 'stats'];
+const BK_KEYS = ['items', 'funnels', 'triggers', 'schedules', 'campaigns', 'settings', 'remarketing', 'rmktBlock', 'stats', 'gLists', 'gPosts', 'gSchedules', 'gAuto'];
 const BK_DEF = { enabled: true, everyDays: 7, includeMedia: true, keep: 4 };
 let bkBusy = false;
 async function ensureOffscreen() {
@@ -309,3 +349,31 @@ chrome.storage.onChanged.addListener((ch, area) => {
   migT = setTimeout(() => migrateMedia(), 3000);
 });
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'zfBackup') migrateMedia().then(mediaGc); });
+
+// ------------------------------------------------------------ grupos ganharam aba própria:
+// agendamentos antigos com grupo viram "post + programação" na aba Grupos (uma vez só)
+async function migrateGroupSchedules() {
+  const d = await chrome.storage.local.get(['schedules', 'gPosts', 'gSchedules', 'gMigrated']);
+  if (d.gMigrated) return;
+  const sch = d.schedules || [];
+  const posts = d.gPosts || [];
+  const gs = d.gSchedules || [];
+  const keep = [];
+  for (const s of sch) {
+    if (!(s.groups || []).length) { keep.push(s); continue; }
+    const finished = s.status === 'done' && (s.repeat || 'none') === 'none';
+    if (!finished) {
+      const pid = 'p' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+      const m = s.mention && s.mention.on;
+      posts.push({ id: pid, name: (s.useName || 'Post do agendamento') + ' (' + new Date(s.at).toLocaleDateString('pt-BR') + ')', parts: [s.targetType === 'funnel' ? { kind: 'funnel', funnelId: s.targetId, mention: !!m, delay: 0 } : { kind: 'item', itemId: s.targetId, mention: !!m, delay: 0 }] });
+      const at = new Date(s.at);
+      const hm = String(at.getHours()).padStart(2, '0') + ':' + String(at.getMinutes()).padStart(2, '0');
+      const base = { id: 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6), postId: pid, targets: { lists: [], groups: s.groups }, enabled: s.status !== 'paused', createdAt: Date.now(), done: {}, lateMin: 120 };
+      if ((s.repeat || 'none') === 'none') gs.push(Object.assign(base, { mode: 'once', at: s.at }));
+      else gs.push(Object.assign(base, { mode: 'week', days: s.repeat === 'daily' ? [0, 1, 2, 3, 4, 5, 6] : [at.getDay()], times: [hm] }));
+    }
+    if ((s.numbers || []).length) keep.push(Object.assign({}, s, { groups: [], mention: null }));
+  }
+  await chrome.storage.local.set({ gPosts: posts, gSchedules: gs, schedules: keep, gMigrated: Date.now() });
+}
+setTimeout(() => migrateGroupSchedules().catch(() => {}), 2500);

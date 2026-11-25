@@ -82,8 +82,8 @@ const ZF = (() => {
       .some((w) => t === w || (w.includes(' ') ? t.includes(w) : new RegExp('(^|\\W)' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '($|\\W)').test(t) && t.split(' ').length <= 6));
   }
 
-  const KEYS = ['items', 'funnels', 'triggers', 'schedules', 'campaigns', 'settings', 'triggerLog', 'history', 'remarketing', 'rmktQueue', 'rmktBlock', 'stats'];
-  const OBJ_KEYS = ['triggerLog', 'rmktBlock', 'stats'];
+  const KEYS = ['items', 'funnels', 'triggers', 'schedules', 'campaigns', 'settings', 'triggerLog', 'history', 'remarketing', 'rmktQueue', 'rmktBlock', 'stats', 'gLists', 'gPosts', 'gSchedules', 'gAuto'];
+  const OBJ_KEYS = ['triggerLog', 'rmktBlock', 'stats', 'gAuto'];
 
   // "2026-11-22" no fuso local (relatório por dia)
   function dayKey(t) {
@@ -120,7 +120,11 @@ const ZF = (() => {
       remarketing: data.remarketing || [],
       rmktQueue: data.rmktQueue || [],
       rmktBlock: data.rmktBlock || {},
-      stats: data.stats || {}
+      stats: data.stats || {},
+      gLists: data.gLists || [],
+      gPosts: data.gPosts || [],
+      gSchedules: data.gSchedules || [],
+      gAuto: data.gAuto || {}
     };
   }
 
@@ -209,7 +213,9 @@ const ZF = (() => {
       Saudacao: g,
       data: now.toLocaleDateString('pt-BR'),
       hora: now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }),
-      numero: (ctx.number || '').replace(/@.*/, '')
+      numero: (ctx.number || '').replace(/@.*/, ''),
+      grupo: ctx.group || '',
+      membro: ctx.member || ''
     };
     // 1º) variações cadastradas: {oi} → "Olá" ({Oi} = primeira letra maiúscula)
     let out = text.replace(/\{([A-Za-z0-9_]+)\}/g, (m, key) => {
