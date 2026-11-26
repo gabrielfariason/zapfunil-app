@@ -156,3 +156,4 @@
 .zf-camp-sub { font-size: 11.5px; opacity: .75; }
 .zf-camp-err { font-size: 11.5px; color: var(--zf-red) !important; white-space: normal !important; }
 .zf-camp-go { border: none; background: var(--zf-acc); color: var(--zf-acc-ink) !important; border-radius: 7px; cursor: pointer; padding: 3px 9px; font-size: 12px !important; font-weight: 600; white-space: nowrap; }
+.zf-camp-re { border: 1px solid var(--zf-line); background: var(--zf-bg); color: var(--zf-ink) !important; border-radius: 7px; cursor: pointer; padding: 3px 8px; font-size: 12px !important; white-space: nowrap; }

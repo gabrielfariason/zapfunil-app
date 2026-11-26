@@ -2103,6 +2103,7 @@
         if (c.status === 'draft' || c.status === 'paused' || c.status === 'stopped' || c.status === 'error') btns.push(`<button class="btn sm" data-start="${c.id}">${done ? '▶ Continuar' : '▶ Iniciar'}</button>`);
         if (c.status === 'running') btns.push(`<button class="btn sm yel" data-pause="${c.id}">⏸ Pausar</button>`);
         if (c.status !== 'running') btns.push(`<button class="btn sm sec" data-edit="${c.id}">Editar</button>`);
+        if (c.failed && c.status !== 'running') btns.push(`<button class="btn sm sec" data-retry="${c.id}" title="Volta só quem falhou para a fila">↻ Reenviar falhas</button>`);
         if (done) btns.push(`<button class="btn sm sec" data-csv="${c.id}">Relatório CSV</button>`);
         if (done && c.status !== 'running') btns.push(`<button class="btn sm sec" data-restart="${c.id}">Recomeçar</button>`);
         btns.push(`<button class="btn sm red" data-del="${c.id}">Excluir</button>`);
@@ -2132,6 +2133,18 @@
     $$('[data-pause]').forEach((b) => (b.onclick = () => setStatus(b.dataset.pause, 'paused')));
     $$('[data-restart]').forEach((b) => (b.onclick = () => {
       if (confirm('Recomeçar do zero? Todos os contatos receberão de novo.')) setStatus(b.dataset.restart, 'draft', { progress: 0, results: [], sent: 0, failed: 0 });
+    }));
+    $$('[data-retry]').forEach((b) => (b.onclick = async () => {
+      let n = 0;
+      DB.campaigns = DB.campaigns.map((c) => {
+        if (c.id !== b.dataset.retry) return c;
+        const r = ZF.campRetryFailed(c);
+        n = r.n;
+        return r.camp;
+      });
+      await persist('campaigns');
+      toast(n + ' contato(s) voltaram para a fila — clique em Continuar');
+      renderCampaigns();
     }));
     $$('[data-edit]').forEach((b) => (b.onclick = () => editCampaign(DB.campaigns.find((c) => c.id === b.dataset.edit))));
     $$('[data-csv]').forEach((b) => (b.onclick = () => {

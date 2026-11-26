@@ -871,9 +871,21 @@
     renderCampBox();
     if (status === 'running') setTimeout(campaignTick, 300);
   }
+  // reenviar só quem falhou: volta esses contatos para a fila (logo depois dos que já receberam)
+  async function campRetry(id) {
+    let n = 0;
+    await mutate('campaigns', (arr) => arr.map((c) => {
+      if (c.id !== id) return c;
+      const r = ZF.campRetryFailed(c);
+      n = r.n;
+      return r.camp;
+    }));
+    toast(n ? '↻ ' + n + ' contato(s) voltaram para a fila' : 'Nenhuma falha para reenviar');
+    renderCampBox();
+  }
   function renderCampBox() {
     if (!campEl || !DB) return;
-    const list = (DB.campaigns || []).filter((c) => Array.isArray(c.contacts) && ['running', 'paused', 'error'].includes(c.status));
+    const list = (DB.campaigns || []).filter((c) => Array.isArray(c.contacts) && (['running', 'paused', 'error'].includes(c.status) || (c.status === 'done' && c.failed && Date.now() - (c.finishedAt || 0) < 3 * 86400000)));
     const show = list.filter((c) => c.status === 'running').concat(list.filter((c) => c.status !== 'running').slice(-2).reverse());
     const sig = JSON.stringify(show.map((c) => [c.id, c.status, c.progress, c.sent, c.failed, c.nextAt, c.lastError])) + campWhy();
     if (campEl.dataset.sig === sig) return;
@@ -886,14 +898,17 @@
       const why = c.status === 'running' ? campWhy() : '';
       let line = done + '/' + total + ' · ✅ ' + (c.sent || 0) + ' · ❌ ' + (c.failed || 0);
       if (c.status === 'running' && !why && c.nextAt > Date.now()) line += ' · próximo ' + new Date(c.nextAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-      const tag = c.status === 'running' ? (why ? '⏳' : '🟢') : c.status === 'paused' ? '⏸' : '⚠️';
+      const tag = c.status === 'running' ? (why ? '· esperando' : '· rodando') : c.status === 'paused' ? '· pausada' : c.status === 'done' ? '· concluída' : '· erro';
       campEl.appendChild(el('div', { class: 'zf-camp-row', 'data-camp': c.id, 'data-status': c.status }, [
         el('span', { class: 'zf-run-txt' }, [
           el('span', { text: '🚀 ' + c.name + ' ' + tag }),
           el('span', { class: 'zf-camp-sub', text: line }),
           why || c.lastError ? el('span', { class: 'zf-camp-err', text: why || c.lastError }) : null
         ]),
-        c.status === 'running'
+        c.status !== 'running' && c.failed ? el('button', { class: 'zf-camp-re', title: 'Reenviar para quem falhou', onclick: () => campRetry(c.id) }, ['↻ Falhas']) : null,
+        c.status === 'done'
+          ? null
+          : c.status === 'running'
           ? el('button', { class: 'zf-cancel', title: 'Pausar campanha', onclick: () => campSet(c.id, 'paused') }, ['Pausar'])
           : el('button', { class: 'zf-camp-go', title: 'Retomar campanha', onclick: () => campSet(c.id, 'running') }, ['▶ Retomar'])
       ]));

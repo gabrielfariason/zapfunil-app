@@ -278,5 +278,33 @@ const ZF = (() => {
     return String(s == null ? '' : s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   }
 
-  return { DEFAULT_SETTINGS, setVariations, dayKey, folders, MEDIA, mediaKey, splitItems, getMedia, withMedia, fullItems, KEYS, OBJ_KEYS, UNIT, UNIT_LABEL, fmtDelay, nextAllowed, isOptOut, uid, load, save, normalizeNumber, applyVars, matchTrigger, normalizeText, typeLabel, typeIcon, fmtDuration, escapeHtml, greeting };
+  // disparo em massa: põe de volta na fila só quem falhou (logo depois dos que já receberam)
+  function campRetryFailed(c) {
+    const contacts = Array.isArray(c.contacts) ? c.contacts : [];
+    const prog = Math.min(c.progress || 0, contacts.length);
+    const results = c.results || [];
+    const okRes = [];
+    const okC = [];
+    const bad = [];
+    for (let i = 0; i < prog; i++) {
+      const r = results[i];
+      if (r && r.ok) {
+        okRes.push(r);
+        okC.push(contacts[i]);
+      } else bad.push(contacts[i]);
+    }
+    if (!bad.length) return { n: 0, camp: c };
+    const camp = Object.assign({}, c, {
+      contacts: okC.concat(bad, contacts.slice(prog)),
+      results: okRes,
+      progress: okC.length,
+      sent: okRes.length,
+      failed: 0,
+      lastError: '',
+      status: c.status === 'done' || c.status === 'error' ? 'paused' : c.status
+    });
+    return { n: bad.length, camp };
+  }
+
+  return { campRetryFailed, DEFAULT_SETTINGS, setVariations, dayKey, folders, MEDIA, mediaKey, splitItems, getMedia, withMedia, fullItems, KEYS, OBJ_KEYS, UNIT, UNIT_LABEL, fmtDelay, nextAllowed, isOptOut, uid, load, save, normalizeNumber, applyVars, matchTrigger, normalizeText, typeLabel, typeIcon, fmtDuration, escapeHtml, greeting };
 })();

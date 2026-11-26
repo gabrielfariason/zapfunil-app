@@ -85,6 +85,20 @@
     return ids;
   }
 
+  async function presence(fn, chatId, ms) {
+    try {
+      await WPP.chat[fn](chatId, ms);
+      return true;
+    } catch (e) {}
+    try {
+      if (WPP.chat.find) await WPP.chat.find(chatId);
+      await WPP.chat[fn](chatId, ms);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   async function resolveChatId(target) {
     // target pode ser "5511999999999", "5511999999999@c.us" ou id de grupo "...@g.us"
     if (!target) throw new Error('Contato vazio');
@@ -165,13 +179,13 @@
       await WPP.chat.openChatBottom(chatId);
       return true;
     },
+    // "digitando…/gravando…" é só enfeite: contato sem conversa aberta ainda (disparo em massa) dava
+    // "Chat not found" e derrubava o envio. Agora abre a conversa se precisar e, se mesmo assim falhar, segue sem.
     async typing(chatId, ms) {
-      await WPP.chat.markIsComposing(chatId, ms);
-      return true;
+      return presence('markIsComposing', chatId, ms);
     },
     async recording(chatId, ms) {
-      await WPP.chat.markIsRecording(chatId, ms);
-      return true;
+      return presence('markIsRecording', chatId, ms);
     },
     async paused(chatId) {
       try { await WPP.chat.markIsPaused(chatId); } catch (e) {}
