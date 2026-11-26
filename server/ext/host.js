@@ -17,6 +17,7 @@ const ZFHost = (() => {
   let logged = false;
   let loopBusy = false;
   let n = 0;
+  let lastOk = true;
   const version = (() => {
     try {
       return chrome.runtime.getManifest().version;
@@ -45,8 +46,14 @@ const ZFHost = (() => {
 
   // ---------------------------------------------------------------- veredito (pode rodar o motor?)
   // until = 0 → sem prazo (modo de um aparelho só, igual a antes)
+  let lastBeatOk = 0; // última vez que a nuvem respondeu à batida
+  let since = Date.now();
+  const OFFLINE_MS = 90000;
   function current() {
     if (!logged || (!me.multi && me.kind === 'mac')) return { ok: true, until: 0 };
+    // Mac sem resposta da nuvem há 90 s (Supabase fora do ar, internet instável): não fica travado,
+    // volta a rodar sozinho como antes. O servidor nunca assume sem a nuvem (evita envio em dobro).
+    if (me.kind === 'mac' && Date.now() - Math.max(lastBeatOk, since) > OFFLINE_MS) return { ok: true, until: 0 };
     const ok = verdict.cloud === true && Date.now() < verdict.until;
     return { ok, until: ok ? verdict.until : 1 };
   }
@@ -282,8 +289,15 @@ const ZFHost = (() => {
       version,
       synced: S.ready
     };
-    const res = await ZFRemote.rpc('zf_beat', { p_host: me.id, p_kind: me.kind, p_name: me.name, p_info: info, p_want: want });
     const was = current().ok;
+    let res;
+    try {
+      res = await ZFRemote.rpc('zf_beat', { p_host: me.id, p_kind: me.kind, p_name: me.name, p_info: info, p_want: want });
+    } catch (e) {
+      if (current().ok !== was) broadcast();
+      throw e;
+    }
+    lastBeatOk = Date.now();
     verdict = { cloud: !!(res && res.leader), until: Date.now() + VERDICT_MS };
     if (res && res.servers > 0 && !me.multi) {
       me.multi = true;
@@ -303,13 +317,23 @@ const ZFHost = (() => {
       const st = await ZFRemote.status();
       const before = logged;
       logged = !!st.logged;
+      if (logged && !before) since = Date.now();
       if (!logged) {
         if (before) broadcast();
         return;
       }
-      await pull(current().ok);
-      await push();
+      // a batida (quem está no comando) não pode depender da sincronização dar certo
+      let syncErr = null;
+      try {
+        await pull(current().ok);
+        await push();
+      } catch (e) {
+        syncErr = e;
+      }
       if (n % 2 === 0 || !before) await beat();
+      else if (current().ok !== lastOk) broadcast();
+      lastOk = current().ok;
+      if (syncErr) throw syncErr;
     } catch (e) {
       console.warn('[ZapFunil] aparelhos', e && e.message);
     } finally {

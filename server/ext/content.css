@@ -148,3 +148,11 @@
 .zf-mention select, .zf-mention input { font-size: 12.5px; padding: 3px 6px; border: 1px solid var(--zf-line); border-radius: 7px; background: var(--zf-bg2); color: var(--zf-ink); outline: none; }
 .zf-mention select { flex: 1; min-width: 0; }
 .zf-mention input { width: 58px; }
+/* disparo em massa no painel ⚡ */
+.zf-camp { padding: 0 10px 8px; display: flex; flex-direction: column; gap: 5px; }
+.zf-camp-row { display: flex; align-items: center; gap: 8px; background: var(--zf-bg2); border: 1px solid var(--zf-line); border-radius: 10px; padding: 7px 9px; font-size: 12.5px; }
+.zf-camp-row[data-status="running"] { background: var(--zf-acc-soft); border-color: rgba(242, 182, 50, .35); }
+.zf-camp-row .zf-run-txt span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zf-camp-sub { font-size: 11.5px; opacity: .75; }
+.zf-camp-err { font-size: 11.5px; color: var(--zf-red) !important; white-space: normal !important; }
+.zf-camp-go { border: none; background: var(--zf-acc); color: var(--zf-acc-ink) !important; border-radius: 7px; cursor: pointer; padding: 3px 9px; font-size: 12px !important; font-weight: 600; white-space: nowrap; }

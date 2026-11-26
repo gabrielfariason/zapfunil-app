@@ -101,6 +101,7 @@
       }
       else if (ZF.KEYS.includes(k)) DB[k] = changes[k].newValue || (ZF.OBJ_KEYS.includes(k) ? {} : []);
       if (k === 'items' || k === 'funnels' || k === 'remarketing') rerender = true;
+      if (k === 'campaigns' && typeof renderCampBox === 'function') setTimeout(() => { try { renderCampBox(); } catch (e) {} }, 0);
       if ((k === 'items' || k === 'funnels') && typeof ensureBar === 'function') setTimeout(ensureBar, 0);
     }
     if (rerender) renderList();
@@ -823,17 +824,79 @@
     max = Math.max(min, Number(max) || min);
     return min + Math.random() * (max - min);
   }
+  // por que a campanha "rodando" não anda agora (vazio = está andando)
+  function campWhy() {
+    if (!DB) return 'carregando…';
+    if (!waReady) return 'aguardando o WhatsApp carregar';
+    if (DB.settings.automationsPaused) return 'automações pausadas — ligue o botão Auto';
+    if (!isLeader) return localLeader ? 'o servidor 24h está no comando' : 'outra aba do WhatsApp está no comando — feche as outras abas';
+    return '';
+  }
+  let campBusyAt = 0;
+  const campContactMax = () => (Number(DB.settings.campContactMaxSec) || 360) * 1000;
   async function campaignTick() {
+    try { renderCampBox(); } catch (e) {}
     if (!isLeader || !waReady || campaignBusy || !autoOn()) return;
-    const camp = DB.campaigns.find((c) => c.status === 'running');
+    const camp = DB.campaigns.find((c) => c.status === 'running' && Array.isArray(c.contacts));
     if (!camp) return;
     campaignBusy = true;
+    campBusyAt = Date.now();
     try {
       await processCampaign(camp.id);
     } catch (e) {
       console.warn('[ZapFunil] campanha', e);
+      const err = (e && e.message) || String(e);
+      await mutate('campaigns', (arr) => arr.map((c) => (c.id === camp.id ? Object.assign({}, c, { lastError: 'Erro: ' + err }) : c))).catch(() => {});
     } finally {
       campaignBusy = false;
+      try { renderCampBox(); } catch (e) {}
+    }
+  }
+
+  // cartão do disparo em massa dentro do painel ⚡ (ver progresso, pausar e retomar sem abrir o painel de controle)
+  let campEl = null;
+  async function campSet(id, status) {
+    let msg = '';
+    await mutate('campaigns', (arr) => arr.map((c) => {
+      if (c.id !== id) return c;
+      if (status === 'running') {
+        if (arr.some((x) => x.status === 'running' && x.id !== id)) { msg = 'Outra campanha já está rodando'; return c; }
+        msg = '▶ Campanha retomada';
+        return Object.assign({}, c, { status: 'running', lastError: '' });
+      }
+      msg = '⏸ Campanha pausada';
+      return Object.assign({}, c, { status: 'paused' });
+    }));
+    if (msg) toast(msg);
+    renderCampBox();
+    if (status === 'running') setTimeout(campaignTick, 300);
+  }
+  function renderCampBox() {
+    if (!campEl || !DB) return;
+    const list = (DB.campaigns || []).filter((c) => Array.isArray(c.contacts) && ['running', 'paused', 'error'].includes(c.status));
+    const show = list.filter((c) => c.status === 'running').concat(list.filter((c) => c.status !== 'running').slice(-2).reverse());
+    const sig = JSON.stringify(show.map((c) => [c.id, c.status, c.progress, c.sent, c.failed, c.nextAt, c.lastError])) + campWhy();
+    if (campEl.dataset.sig === sig) return;
+    campEl.dataset.sig = sig;
+    campEl.innerHTML = '';
+    campEl.style.display = show.length ? '' : 'none';
+    for (const c of show) {
+      const total = c.contacts.length;
+      const done = c.progress || 0;
+      const why = c.status === 'running' ? campWhy() : '';
+      let line = done + '/' + total + ' · ✅ ' + (c.sent || 0) + ' · ❌ ' + (c.failed || 0);
+      if (c.status === 'running' && !why && c.nextAt > Date.now()) line += ' · próximo ' + new Date(c.nextAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+      const tag = c.status === 'running' ? (why ? '⏳' : '🟢') : c.status === 'paused' ? '⏸' : '⚠️';
+      campEl.appendChild(el('div', { class: 'zf-camp-row', 'data-camp': c.id, 'data-status': c.status }, [
+        el('span', { class: 'zf-run-txt' }, [
+          el('span', { text: '🚀 ' + c.name + ' ' + tag }),
+          el('span', { class: 'zf-camp-sub', text: line }),
+          why || c.lastError ? el('span', { class: 'zf-camp-err', text: why || c.lastError }) : null
+        ]),
+        c.status === 'running'
+          ? el('button', { class: 'zf-cancel', title: 'Pausar campanha', onclick: () => campSet(c.id, 'paused') }, ['Pausar'])
+          : el('button', { class: 'zf-camp-go', title: 'Retomar campanha', onclick: () => campSet(c.id, 'running') }, ['▶ Retomar'])
+      ]));
     }
   }
 
@@ -883,7 +946,15 @@
       try {
         if (!funnel) throw new Error('mensagem da variação ' + (result.v || '') + ' foi apagada');
         const r = await call('resolve', contact.number);
-        await runFunnel(r.id, funnel, { name: contact.name || r.name, number: r.id }, 'campanha: ' + camp.name);
+        // um funil com "aguardar resposta" (ou travado) não pode segurar a campanha inteira:
+        // depois de 6 min a campanha segue para o próximo e o funil continua em 2º plano
+        let slow = null;
+        const ok = await Promise.race([
+          runFunnel(r.id, funnel, { name: contact.name || r.name, number: r.id }, 'campanha: ' + camp.name),
+          new Promise((res) => { slow = setTimeout(() => res('slow'), campContactMax()); })
+        ]).finally(() => clearTimeout(slow));
+        if (ok === false) throw new Error('envio cancelado');
+        if (ok === 'slow') result.err = 'funil ainda rodando (segue em 2º plano)';
         result.ok = true;
       } catch (e) {
         result.err = e.message || String(e);
@@ -1279,6 +1350,8 @@
     }, 1500);
     listEl = el('div', { class: 'zf-list' });
     runEl = el('div', { class: 'zf-running' });
+    campEl = el('div', { class: 'zf-camp' });
+    campEl.style.display = 'none';
 
     const panel = el('div', { class: 'zf-panel' }, [
       el('div', { class: 'zf-head' }, [
@@ -1298,6 +1371,7 @@
       folderEl,
       mentionEl,
       tabBar,
+      campEl,
       runEl,
       listEl,
       el('div', { class: 'zf-foot' }, [
