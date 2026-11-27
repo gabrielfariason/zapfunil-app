@@ -2707,6 +2707,29 @@
         return toast('Arquivo inválido');
       }
       if (!data.__zapfunil) return toast('Esse arquivo não é um backup do ZapFunil');
+      // pacote "só organizar": muda apenas a pasta (e acrescenta no fim do nome) dos itens/funis que já existem.
+      // Não cria, não apaga e não mexe em conteúdo/mídia.
+      if (data.__organize) {
+        const fo = data.folders || {};
+        const rn = data.renames || {};
+        const from = data.renameFrom || {};
+        let nf = 0;
+        let nr = 0;
+        const touch = (kind) => (x) => {
+          let c = x;
+          const f = fo[kind + ':' + x.id];
+          if (f && !x.folder) { c = Object.assign({}, c, { folder: String(f).slice(0, 40) }); nf++; }
+          if (kind === 'item' && rn[x.id] && (!from[x.id] || x.name === from[x.id])) { c = Object.assign({}, c, { name: rn[x.id] }); nr++; }
+          return c;
+        };
+        const items = DB.items.map(touch('item'));
+        const funnels = DB.funnels.map(touch('funnel'));
+        await ZF.save({ items, funnels });
+        await reload();
+        toast(nf || nr ? 'Organizado: ' + nf + ' em pastas' + (nr ? ', ' + nr + ' nomes completados' : '') + ' — nada foi apagado ✅' : 'Já estava organizado — nada mudou');
+        renderSettings();
+        return;
+      }
       // pacote "só adicionar" (ex.: funis prontos): nunca substitui nem apaga nada, só junta o que é novo
       const addOnly = !!data.__addOnly;
       const replace = addOnly ? false : confirm('OK = SUBSTITUIR tudo pelo backup\nCancelar = JUNTAR com o que já existe');
