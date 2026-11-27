@@ -312,7 +312,16 @@
     if (item.type === 'audio') return Math.min(s.recordingMax, Math.max(2, (item.duration || 5) * s.recordingFactor));
     return 1.5;
   }
-  // opts.simSecs: quanto tempo simular (já descontado do intervalo do funil)
+  // mantém o "digitando…/gravando…" visível durante toda a simulação (o WhatsApp apaga sozinho depois de uns segundos)
+  async function simWait(chatId, method, secs, run) {
+    const end = Date.now() + secs * 1000;
+    call(method, chatId, Math.round(secs * 1000)).catch(() => {});
+    while (Date.now() < end) {
+      await wait(Math.min(8000, end - Date.now()), run);
+      if (Date.now() < end - 1500) call(method, chatId, Math.round(end - Date.now())).catch(() => {});
+    }
+  }
+  // opts.simSecs: quanto tempo simular
   async function sendItem(chatId, item, ctx, run, opts) {
     opts = opts || {};
     if (item && item.type !== 'text') {
@@ -326,8 +335,7 @@
       if (!text.trim()) return;
       if (secs > 0.2) {
         setPhase(run, 'digitando', secs);
-        await call('typing', chatId, Math.round(secs * 1000)).catch(() => {});
-        await wait(secs * 1000, run);
+        await simWait(chatId, 'typing', secs, run);
       }
       setPhase(run, 'enviando', 0);
       markBot(chatId);
@@ -336,8 +344,7 @@
     } else if (item.type === 'audio') {
       if (secs > 0.2) {
         setPhase(run, 'gravando', secs);
-        await call('recording', chatId, Math.round(secs * 1000)).catch(() => {});
-        await wait(secs * 1000, run);
+        await simWait(chatId, 'recording', secs, run);
       }
       setPhase(run, 'enviando', 0);
       markBot(chatId);
@@ -352,8 +359,7 @@
     } else {
       if (secs > 0.2) {
         setPhase(run, 'digitando', secs);
-        await call('typing', chatId, Math.round(secs * 1000)).catch(() => {});
-        await wait(secs * 1000, run);
+        await simWait(chatId, 'typing', secs, run);
       }
       setPhase(run, 'enviando', 0);
       const o = { type: item.type, caption: ZF.applyVars(item.caption || '', ctx) || undefined };
@@ -467,18 +473,17 @@
           if (delay) await wait(delay * 1000, run);
           continue; // item apagado – pula
         }
-        // O intervalo configurado é o tempo TOTAL entre uma mensagem e a próxima:
-        // o "gravando…/digitando…" acontece dentro dele (não soma). Ex.: 30 s → sai em 30 s.
+        // Ritmo natural: primeiro a pausa ("Esperar"), depois o "digitando…/gravando…" pelo tempo do texto/áudio,
+        // e só então a mensagem sai. Sem "Esperar" definido, a pausa é do mesmo tamanho da digitação/gravação
+        // (era assim que funcionava na prática e ficava natural).
         const simulate = st.simulate !== false;
-        let sim = simulate ? simSeconds(item, ctx) : 0;
+        const sim = simulate ? simSeconds(item, ctx) : 0;
+        const pause = delay > 0 ? delay : sim;
         run.nextLabel = (item.type === 'audio' ? '🎤 ' : item.type === 'text' ? '💬 ' : item.type === 'document' ? '📄 ' : '🖼️ ') + (item.name || '');
         run.phase = 'aguardando';
-        run.nextAt = Date.now() + (delay ? delay : sim) * 1000;
+        run.nextAt = Date.now() + (pause + sim) * 1000;
         updateCountdowns();
-        if (delay) {
-          sim = Math.min(sim, delay);
-          if (delay - sim > 0) await wait((delay - sim) * 1000, run);
-        }
+        if (pause > 0) await wait(pause * 1000, run);
         run.msgN++;
         let mentionAll = false;
         if (mention) {

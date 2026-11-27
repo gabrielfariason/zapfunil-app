@@ -907,7 +907,7 @@
     let total = 0;
     f.steps.forEach((st) => {
       if (st.kind === 'wait_reply') return;
-      // o intervalo já inclui o "digitando/gravando"; sem intervalo, conta só a simulação
+      // pausa ("Esperar"; sem ela, do tamanho da simulação) + "digitando/gravando"
       const delay = Number(st.delay) || 0;
       const it = DB.items.find((i) => i.id === st.itemId);
       let sim = 0;
@@ -916,7 +916,7 @@
         else if (it.type === 'audio') sim = Math.min(s.recordingMax, Math.max(2, (it.duration || 5) * s.recordingFactor));
         else sim = 1.5;
       }
-      total += delay || sim;
+      total += (delay || sim) + sim;
     });
     return total;
   }
@@ -995,7 +995,7 @@
       <div class="row2">${folderField(isNew ? null : f.folder || '')}<div><label>🏷️ Ao enviar, colocar etiqueta</label><select id="fStage">${stageOptions(f.stage)}</select></div></div>
       <label>Etapas</label><div id="steps"></div>
       <div class="bar"><button class="btn sec sm" id="addStep">+ Adicionar envio</button><button class="btn sec sm" id="addWait">+ Aguardar resposta do lead</button></div>
-      <div class="hint">"Esperar" = tempo total entre a mensagem anterior e esta (o "digitando/gravando" acontece dentro desse tempo). "Aguardar resposta" pode seguir um caminho se o lead responder e outro se não responder.</div>
+      <div class="hint">"Esperar" = pausa depois da mensagem anterior; em seguida aparece "digitando…/gravando…" pelo tempo do texto/áudio (áudio: até ${DB.settings.recordingMax}s) e a mensagem sai — ritmo natural. "Aguardar resposta" pode seguir um caminho se o lead responder e outro se não responder.</div>
       <div class="modal-foot"><button class="btn sec" id="cancel">Cancelar</button><button class="btn" id="saveF">Salvar</button></div>`);
     // com pastas, a lista de itens vem agrupada por pasta
     const itemOpts = (sel) => {
