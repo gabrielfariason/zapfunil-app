@@ -51,7 +51,8 @@
   function call(method, ...args) {
     return new Promise((resolve, reject) => {
       const id = TAB_TOKEN + '-' + ++reqSeq;
-      const timeoutMs = method === 'ready' ? 10 * 60 * 1000 : 180 * 1000;
+      // prazos: enfeites (digitando/gravando) desistem rápido; envio de mídia grande pode demorar mais
+      const timeoutMs = method === 'ready' ? 10 * 60 * 1000 : /^(typing|recording|paused)$/.test(method) ? 15 * 1000 : method === 'sendFile' ? 300 * 1000 : method === 'sendText' ? 120 * 1000 : 180 * 1000;
       const timer = setTimeout(() => {
         pending.delete(id);
         reject(new Error('Tempo esgotado em ' + method));
@@ -325,7 +326,7 @@
       if (!text.trim()) return;
       if (secs > 0.2) {
         setPhase(run, 'digitando', secs);
-        await call('typing', chatId, Math.round(secs * 1000));
+        await call('typing', chatId, Math.round(secs * 1000)).catch(() => {});
         await wait(secs * 1000, run);
       }
       setPhase(run, 'enviando', 0);
@@ -335,7 +336,7 @@
     } else if (item.type === 'audio') {
       if (secs > 0.2) {
         setPhase(run, 'gravando', secs);
-        await call('recording', chatId, Math.round(secs * 1000));
+        await call('recording', chatId, Math.round(secs * 1000)).catch(() => {});
         await wait(secs * 1000, run);
       }
       setPhase(run, 'enviando', 0);
@@ -351,7 +352,7 @@
     } else {
       if (secs > 0.2) {
         setPhase(run, 'digitando', secs);
-        await call('typing', chatId, Math.round(secs * 1000));
+        await call('typing', chatId, Math.round(secs * 1000)).catch(() => {});
         await wait(secs * 1000, run);
       }
       setPhase(run, 'enviando', 0);
@@ -368,7 +369,7 @@
     }
     bumpStats((d) => { inc(d, 'msgs'); d.types = d.types || {}; inc(d.types, item.type); });
     markBot(chatId);
-    try { await call('paused', chatId); } catch (e) {}
+    call('paused', chatId).catch(() => {}); // enfeite: não segura o próximo envio
   }
 
   // Executa um funil (ou um item solto) num chat. Retorna quando termina.

@@ -85,14 +85,23 @@
     return ids;
   }
 
-  async function presence(fn, chatId, ms) {
+  // promessa com prazo (algumas chamadas do WhatsApp às vezes nunca respondem)
+  function withTimeout(p, ms, what) {
+    let t;
+    return Promise.race([Promise.resolve(p), new Promise((_, rej) => (t = setTimeout(() => rej(new Error('Tempo esgotado: ' + what)), ms)))]).finally(() => clearTimeout(t));
+  }
+  // "digitando…/gravando…" é só enfeite: nunca pode travar o envio. Não espera a duração aqui
+  // (quem espera é a extensão) e desiste rápido se o WhatsApp não responder.
+  async function presence(fn, chatId) {
     try {
-      await WPP.chat[fn](chatId, ms);
+      await withTimeout(WPP.chat[fn](chatId), 3000, fn);
       return true;
-    } catch (e) {}
+    } catch (e) {
+      if (/Tempo esgotado/.test(e.message)) return false; // WhatsApp não respondeu: segue sem o enfeite
+    }
     try {
-      if (WPP.chat.find) await WPP.chat.find(chatId);
-      await WPP.chat[fn](chatId, ms);
+      if (WPP.chat.find) await withTimeout(WPP.chat.find(chatId), 3000, 'find');
+      await withTimeout(WPP.chat[fn](chatId), 3000, fn);
       return true;
     } catch (e) {
       return false;
@@ -190,18 +199,18 @@
       return presence('markIsRecording', chatId, ms);
     },
     async paused(chatId) {
-      try { await WPP.chat.markIsPaused(chatId); } catch (e) {}
+      try { await withTimeout(WPP.chat.markIsPaused(chatId), 3000, 'paused'); } catch (e) {}
       return true;
     },
     async sendText(chatId, text, opts) {
-      const o = { createChat: true, linkPreview: true };
+      const o = { createChat: true, linkPreview: true, waitForAck: false };
       const ml = await mentionList(chatId, opts);
       if (ml) o.mentionedList = ml;
       const r = await WPP.chat.sendTextMessage(chatId, text, o);
       return { id: wid(r && r.id) };
     },
     async sendFile(chatId, dataUrl, opts) {
-      const o = Object.assign({ createChat: true }, opts || {});
+      const o = Object.assign({ createChat: true, waitForAck: false }, opts || {});
       const ml = await mentionList(chatId, o);
       delete o.mentionAll;
       delete o.mentionIds;
