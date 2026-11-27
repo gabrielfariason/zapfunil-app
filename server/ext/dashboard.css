@@ -241,3 +241,20 @@ audio.mplayer { width: 100%; height: 36px; }
 .switch input:checked + span { background: var(--acc); border-color: var(--acc); }
 .switch input:checked + span::after { left: 20px; background: #1d1f24; }
 .modal-foot .grow { flex: 1; }
+/* Leads / jornada */
+.ftag.stag { background: rgba(242, 182, 50, .12); color: var(--acc, #f2b632); border-color: rgba(242, 182, 50, .35); }
+.kanban { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 6px; }
+.kcol { flex: 1 0 190px; max-width: 260px; background: var(--card2); border: 1px solid var(--line); border-radius: 12px; padding: 8px; max-height: 420px; overflow-y: auto; }
+.khead { font-weight: 600; font-size: 13px; display: flex; justify-content: space-between; align-items: center; padding: 2px 4px 8px; position: sticky; top: -8px; background: var(--card2); }
+.khead span { background: var(--card); border: 1px solid var(--line); border-radius: 99px; padding: 0 8px; font-size: 12px; }
+.lcard { background: var(--card); border: 1px solid var(--line); border-radius: 9px; padding: 7px 9px; margin-bottom: 6px; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.lcard small { color: var(--mute); font-size: 11.5px; }
+.lcard .lrep { font-size: 11.5px; color: #3ecf8e; font-weight: 600; }
+.lcard .lerr { color: #ff6b6b; }
+.lconv { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0 0 10px; font-size: 13px; }
+.lconv span { background: var(--card2); border: 1px solid var(--line); border-radius: 8px; padding: 4px 9px; }
+.lconv small { color: var(--mute); }
+.lconv i { color: var(--mute); font-style: normal; }
+.ldot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 7px; vertical-align: 0; }
+.lact { display: flex; gap: 6px; align-items: center; }
+.lact select { max-width: 200px; }

@@ -328,13 +328,99 @@
       }
     },
     async chatsByLabel(labelId) {
-      const chats = await WPP.chat.list({ withLabels: [labelId] });
-      return chats.map((c) => {
+      const chats = await WPP.chat.list({ withLabels: [String(labelId)] });
+      const out = [];
+      for (const c of chats) {
         const id = wid(c.id);
-        return { id, name: contactName(id) };
-      });
+        if (/@g\.us$/.test(id)) continue;
+        let number = /@c\.us$/.test(id) ? id.replace(/@.*/, '') : '';
+        if (!number) {
+          try { const e = await WPP.contact.getPnLidEntry(id); if (e && e.phoneNumber && e.phoneNumber.id) number = String(e.phoneNumber.id); } catch (e) {}
+        }
+        out.push({ id, number, name: contactName(id) || (number ? contactName(number + '@c.us') : '') });
+      }
+      return out;
+    },
+    // ---- etiquetas do WhatsApp Business (jornada do lead)
+    async labelsAll() {
+      const ls = await WPP.labels.getAllLabels();
+      return ls.map((l) => ({ id: String(l.id), name: l.name, count: l.count || 0, color: l.hexColor || '' }));
+    },
+    // coloca as etiquetas `add` (cria se não existir) e tira as `remove` que o contato tiver
+    async applyLabels(chatId, add, remove) {
+      add = (add || []).filter(Boolean);
+      remove = (remove || []).filter(Boolean);
+      const created = [];
+      for (const n of add) {
+        if (!(await findLabel(n))) {
+          await WPP.labels.addNewLabel(n, { labelColor: labelColor(n) });
+          created.push(n);
+        }
+      }
+      const all = await WPP.labels.getAllLabels();
+      const byName = (n) => all.find((l) => normName(l.name) === normName(n));
+      const cur = chatLabels(chatId);
+      const ops = [];
+      for (const n of add) {
+        const l = byName(n);
+        if (l && !(cur && cur.includes(String(l.id)))) ops.push({ labelId: String(l.id), type: 'add' });
+      }
+      for (const n of remove) {
+        const l = byName(n);
+        if (l && (!cur || cur.includes(String(l.id))) && !add.some((a) => normName(a) === normName(n))) ops.push({ labelId: String(l.id), type: 'remove' });
+      }
+      if (ops.length) await WPP.labels.addOrRemoveLabels(chatId, ops);
+      return { ok: true, ops: ops.length, created };
+    },
+    async labelsEnsure(names) {
+      const created = [];
+      for (const n of names || []) {
+        if (!(await findLabel(n))) {
+          await WPP.labels.addNewLabel(n, { labelColor: labelColor(n) });
+          created.push(n);
+        }
+      }
+      return { created };
+    },
+    // reorganizar: passa todos os contatos da etiqueta antiga para a nova (tirando a antiga)
+    async labelMove(fromId, toName) {
+      const from = (await WPP.labels.getAllLabels()).find((l) => String(l.id) === String(fromId));
+      if (!from) throw new Error('Etiqueta não encontrada');
+      const chats = await WPP.chat.list({ withLabels: [String(fromId)] });
+      let n = 0;
+      for (const c of chats) {
+        const id = wid(c.id);
+        await methods.applyLabels(id, toName ? [toName] : [], [from.name]);
+        n++;
+      }
+      return { moved: n };
+    },
+    async labelDelete(id) {
+      await WPP.labels.deleteLabel(String(id));
+      return { ok: true };
     }
   };
+  const normName = (n) => String(n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+  async function findLabel(n) {
+    return (await WPP.labels.getAllLabels()).find((l) => normName(l.name) === normName(n));
+  }
+  function chatLabels(chatId) {
+    try {
+      const c = WPP.chat.get(chatId);
+      if (c && Array.isArray(c.labels)) return c.labels.map(String);
+    } catch (e) {}
+    return null; // não deu para ler: tenta tirar mesmo assim
+  }
+  // cor fixa por etapa (paleta do WhatsApp Business tem 20 cores, índices 0–19)
+  function labelColor(n) {
+    const k = normName(n);
+    const map = { abordado: 0, conversando: 1, apresentacao: 2, proposta: 3, 'link enviado': 4, frio: 9 };
+    for (const [w, c] of Object.entries(map)) if (k === w || k === 'nova ' + w) return k.startsWith('nova') ? c + 10 : c;
+    if (k.startsWith('aluno')) return 5;
+    let h = 0;
+    for (const ch of k) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return h % 20;
+  }
 
   window.addEventListener('message', async (ev) => {
     const d = ev.data;

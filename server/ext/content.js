@@ -437,6 +437,7 @@
       run.total += br.steps.length;
       run.label = funnel.name + ' → ' + br.name;
       run.branchKey = funnelKey(br);
+      if (br.stage) run.branchStage = br.stage;
       renderRunning();
       await runSteps(br.steps, depth + 1);
     };
@@ -507,6 +508,11 @@
       if (running.get(chatId) === run) running.delete(chatId);
       renderRunning();
     }
+    // etiqueta da jornada (WhatsApp Business): o funil enviado define a etapa do lead
+    if (ok && !isRmkt && !/@g\.us$/.test(chatId)) {
+      const stages = [funnel.stage, run.branchStage].filter(Boolean);
+      for (const stg of stages) await applyStage(chatId, stg, ctx, funnel.name).catch((e) => console.warn('[ZapFunil] etiqueta', e));
+    }
     if (ok && !isRmkt) rmktEnqueue(chatId, funnelKey(funnel), ctx).catch((e) => console.warn('[ZapFunil] rmkt', e));
     // o funil/mensagem enviado pelo caminho "se responder / se não responder" também dispara o remarketing dele
     if (ok && !isRmkt && run.branchKey) rmktEnqueue(chatId, run.branchKey, ctx).catch((e) => console.warn('[ZapFunil] rmkt', e));
@@ -539,6 +545,7 @@
       if (waiters && waiters.length) waiters.slice().forEach((f) => f());
     }
     if (isLeader && m.isGroup && !m.fromMe) gOnMessage(m);
+    if (isLeader) leadOnMessage(m);
     if (isLeader) {
       try {
         // respostas sempre contam para cancelar remarketing, mesmo com automações pausadas
@@ -1016,6 +1023,67 @@
     } catch (e) {}
   }
 
+  // ---------------------------------------------------------------- JORNADA / ETIQUETAS
+  // leads: { chatId: { name, stages: { jornada(:etapa p/ multi): { stage, since } }, path: [{ s, t }], lastOut, lastIn, lastFunnel, updatedAt } }
+  async function applyStage(chatId, stage, ctx, why) {
+    if (!stage) return;
+    const plan = ZF.stagePlan(DB.settings, stage);
+    let labelErr = '';
+    if (DB.settings.labelsOn !== false) {
+      try {
+        await call('applyLabels', chatId, plan.add, plan.remove);
+      } catch (e) {
+        labelErr = (e && e.message) || String(e);
+        console.warn('[ZapFunil] etiqueta', labelErr);
+      }
+    }
+    const now = Date.now();
+    const js = ZF.journeys(DB.settings);
+    let changed = false;
+    await mutate('leads', (L) => {
+      const l = Object.assign({ stages: {}, path: [] }, L[chatId] || {});
+      l.stages = Object.assign({}, l.stages);
+      // tira as etapas que esta entrada limpa
+      for (const k of Object.keys(l.stages)) if (plan.remove.includes(l.stages[k].stage)) delete l.stages[k];
+      const j = js.find((x) => x.id === plan.journey);
+      const key = j ? (j.multi ? j.id + ':' + stage : j.id) : 'outros:' + stage;
+      if (!l.stages[key] || l.stages[key].stage !== stage) {
+        l.stages[key] = { stage, since: now };
+        l.path = (l.path || []).concat([{ s: stage, t: now }]).slice(-40);
+        changed = true;
+      }
+      if (ctx && ctx.name) l.name = ctx.name;
+      l.lastOut = now;
+      l.lastFunnel = why || l.lastFunnel || '';
+      l.updatedAt = now;
+      if (labelErr) l.labelErr = labelErr;
+      else delete l.labelErr;
+      L[chatId] = l;
+      // limite de tamanho: mantém os 4000 mais recentes
+      const ids = Object.keys(L);
+      if (ids.length > 4000) ids.sort((a, b) => (L[a].updatedAt || 0) - (L[b].updatedAt || 0)).slice(0, ids.length - 4000).forEach((id) => delete L[id]);
+      return L;
+    });
+    // remarketing por etiqueta: entrou nesta etapa → começa o dela e para o das outras
+    if (changed) {
+      await rmktOnOtherFunnel(chatId, 'label:' + stage).catch(() => {});
+      await rmktEnqueue(chatId, 'label:' + stage, ctx || {}).catch(() => {});
+    }
+  }
+  const leadSeen = new Map();
+  function leadOnMessage(m) {
+    if (m.isGroup || !DB.leads || !DB.leads[m.chatId]) return;
+    if (m.fromMe && isBotEcho(m.chatId)) return;
+    const k = m.chatId + (m.fromMe ? ':o' : ':i');
+    if (Date.now() - (leadSeen.get(k) || 0) < 15000) return;
+    leadSeen.set(k, Date.now());
+    mutate('leads', (L) => {
+      if (!L[m.chatId]) return L;
+      L[m.chatId] = Object.assign({}, L[m.chatId], m.fromMe ? { lastOut: Date.now() } : { lastIn: Date.now() }, { updatedAt: Date.now() });
+      return L;
+    }).catch(() => {});
+  }
+
   // ---------------------------------------------------------------- REMARKETING
   // Fila salva em storage (rmktQueue). Cada entrada = 1 contato numa regra de remarketing.
   // status: waiting | sending | done | replied | cancelled | error | expired
@@ -1153,6 +1221,14 @@
     if ((DB.rmktQueue || []).some((e) => e.status === 'waiting' && e.mode === 'on_reply' && !e.gotReply && e.expireAt && e.expireAt <= now)) {
       await mutate('rmktQueue', (q) => q.map((e) => (e.status === 'waiting' && e.mode === 'on_reply' && !e.gotReply && e.expireAt && e.expireAt <= Date.now() ? Object.assign({}, e, { status: 'expired', reason: e.stageIdx ? 'lead não respondeu mais' : 'lead não respondeu no prazo', endedAt: Date.now(), dueAt: null }) : e)));
     }
+    // fim do remarketing sem resposta → etiqueta Frio
+    const cold = (DB.rmktQueue || []).filter((e) => e.coldAt && !e.coldDone && e.coldAt <= now);
+    for (const e of cold) {
+      const lead = (DB.leads || {})[e.chatId];
+      const replied = lead && lead.lastIn && lead.lastIn > (e.endedAt || e.createdAt);
+      await mutate('rmktQueue', (q) => q.map((x) => (x.id === e.id ? Object.assign({}, x, { coldDone: true }) : x)));
+      if (!replied) await applyStage(e.chatId, ZF.coldStage(DB.settings), { name: e.name }, 'sem resposta no remarketing').catch(() => {});
+    }
     const due = (DB.rmktQueue || []).filter((e) => e.status === 'waiting' && e.dueAt && e.dueAt <= now).sort((a, b) => a.dueAt - b.dueAt);
     if (!due.length) return;
     rmktBusy = true;
@@ -1228,7 +1304,12 @@
       out = applyMsg(rule, out, mm.fromMe, Math.max(mm.t, now));
     }
     if (out.status !== 'waiting') return out;
-    if (out.stageIdx >= rule.stages.length) return Object.assign(out, { status: 'done', reason: 'sequência concluída', dueAt: null, endedAt: now });
+    if (out.stageIdx >= rule.stages.length) {
+      const done = Object.assign(out, { status: 'done', reason: 'sequência concluída', dueAt: null, endedAt: now });
+      // "se não responder até o fim, marcar Frio" depois de X horas
+      if (rule.coldOnEnd) done.coldAt = now + (Number(rule.coldHours) || 24) * 3600000;
+      return done;
+    }
     out.dueAt = stageDueAt(rule, out);
     return out;
   }
@@ -2322,6 +2403,19 @@
       sendPostToGroups(post, groups, 'grupo: enviar agora').catch(() => {});
       sendResponse({ ok: true, n: groups.length });
       return;
+    }
+    if (msg.type === 'zf:call') {
+      const OK = ['labelsAll', 'labelsEnsure', 'labelMove', 'labelDelete', 'chatsByLabel', 'applyLabels'];
+      if (!OK.includes(msg.method)) {
+        sendResponse({ error: 'método não permitido' });
+        return;
+      }
+      if (!waReady) {
+        sendResponse({ error: 'WhatsApp ainda carregando' });
+        return;
+      }
+      call(msg.method, ...(msg.args || [])).then((r) => sendResponse({ result: r }), (e) => sendResponse({ error: e.message || String(e) }));
+      return true;
     }
     if (msg.type === 'zf:gmembers') {
       if (!waReady) {

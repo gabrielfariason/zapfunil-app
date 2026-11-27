@@ -94,6 +94,7 @@
     return h + '</optgroup>';
   }
   function targetName(type, id) {
+    if (type === 'label') return '🏷️ etiqueta ' + id;
     if (type === 'item') {
       const i = DB.items.find((x) => x.id === id);
       return i ? ZF.typeIcon(i.type) + ' ' + i.name : '(item apagado)';
@@ -208,7 +209,7 @@
   $('#openWa').addEventListener('click', () => chrome.runtime.sendMessage({ type: 'focusWhatsApp' }));
 
   function render() {
-    const fn = { mobile: renderMobile, items: renderItems, funnels: renderFunnels, remarketing: renderRemarketing, triggers: renderTriggers, schedules: renderSchedules, campaigns: renderCampaigns, groups: renderGroups, report: renderReport, search: renderSearch, history: renderHistory, settings: renderSettings }[view] || renderItems;
+    const fn = { leads: renderLeads, mobile: renderMobile, items: renderItems, funnels: renderFunnels, remarketing: renderRemarketing, triggers: renderTriggers, schedules: renderSchedules, campaigns: renderCampaigns, groups: renderGroups, report: renderReport, search: renderSearch, history: renderHistory, settings: renderSettings }[view] || renderItems;
     fn();
   }
 
@@ -379,7 +380,11 @@
     return `<div><label>Pasta (opcional)</label><input type="text" id="fFolder" list="folderList" value="${esc(def)}" placeholder="ex: APEX, Afiliado…" autocomplete="off">
       <datalist id="folderList">${allFolders().map((f) => `<option value="${esc(f)}">`).join('')}</datalist><div class="hint">Organiza a lista aqui e no painel ⚡ do WhatsApp</div></div>`;
   }
-  const ftag = (x) => (folderOf(x) && !curFolder ? `<span class="ftag">📁 ${esc(folderOf(x))}</span>` : '');
+  const ftag = (x) => (folderOf(x) && !curFolder ? `<span class="ftag">📁 ${esc(folderOf(x))}</span>` : '') + (x && x.stage ? `<span class="ftag stag">🏷️ ${esc(x.stage)}</span>` : '');
+  // etapas da jornada (etiquetas do WhatsApp Business) agrupadas
+  function stageOptions(cur) {
+    return `<option value="">— nenhuma —</option>` + ZF.journeys(DB.settings).map((j) => `<optgroup label="${esc(j.name)}">${j.stages.map((st) => `<option value="${esc(st)}" ${st === cur ? 'selected' : ''}>${esc(st)}</option>`).join('')}</optgroup>`).join('');
+  }
   // mover para pasta (botão 📁 de cada linha)
   function moveToFolder(key, id, again) {
     const obj = DB[key].find((x) => x.id === id);
@@ -987,7 +992,7 @@
     openModal(`<h2>${isNew ? 'Novo funil' : 'Editar funil'}</h2>
       <div class="row2"><div><label>Nome</label><input type="text" id="fName" value="${esc(f.name)}" placeholder="Ex: Funil de boas-vindas"></div>
       <div><label>Atalho (opcional)</label><input type="text" id="fShort" value="${esc(f.shortcut || '')}"></div></div>
-      <div class="row2">${folderField(isNew ? null : f.folder || '')}<div></div></div>
+      <div class="row2">${folderField(isNew ? null : f.folder || '')}<div><label>🏷️ Ao enviar, colocar etiqueta</label><select id="fStage">${stageOptions(f.stage)}</select></div></div>
       <label>Etapas</label><div id="steps"></div>
       <div class="bar"><button class="btn sec sm" id="addStep">+ Adicionar envio</button><button class="btn sec sm" id="addWait">+ Aguardar resposta do lead</button></div>
       <div class="hint">"Esperar" = tempo total entre a mensagem anterior e esta (o "digitando/gravando" acontece dentro desse tempo). "Aguardar resposta" pode seguir um caminho se o lead responder e outro se não responder.</div>
@@ -1085,6 +1090,7 @@
       const fold = $('#fFolder').value.trim().slice(0, 40);
       if (fold) f.folder = fold;
       else delete f.folder;
+      f.stage = $('#fStage').value; // '' = sem etiqueta (fica registrado para não ser preenchido automaticamente)
       if (!f.name) return toast('Dê um nome ao funil');
       if (!f.steps.some((s) => s.kind !== 'wait_reply')) return toast('Adicione pelo menos um envio');
       if (f.shortcut) {
@@ -1217,7 +1223,7 @@
       stopOnManual: true, stopOnOtherFunnel: true, restartOnReply: true,
       window: { enabled: true, start: '08:00', end: '21:00', days: [0, 1, 2, 3, 4, 5, 6] }, maxLateHours: 0
     };
-    const trigBoxes = DB.funnels.map((f) => ['funnel:' + f.id, '🔁 ' + f.name]).concat(DB.items.map((i) => ['item:' + i.id, ZF.typeIcon(i.type) + ' ' + i.name]))
+    const trigBoxes = ZF.allStages(DB.settings).filter((st) => st !== ZF.coldStage(DB.settings)).map((st) => ['label:' + st, '🏷️ entrou na etiqueta ' + st]).concat(DB.funnels.map((f) => ['funnel:' + f.id, '🔁 ' + f.name])).concat(DB.items.map((i) => ['item:' + i.id, ZF.typeIcon(i.type) + ' ' + i.name]))
       .map(([v, l]) => `<label class="inline" style="width:46%"><input type="checkbox" class="trg" value="${esc(v)}" ${(r.triggers || []).includes(v) ? 'checked' : ''}> ${esc(l)}</label>`).join('');
     const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
     const w = r.window || { enabled: false, start: '08:00', end: '21:00', days: [0, 1, 2, 3, 4, 5, 6] };
@@ -1235,6 +1241,7 @@
         <label class="inline"><input type="checkbox" id="rManual" ${r.stopOnManual !== false ? 'checked' : ''}> Parar se eu mandar mensagem manualmente para o lead</label><br>
         <label class="inline"><input type="checkbox" id="rOther" ${r.stopOnOtherFunnel !== false ? 'checked' : ''}> Parar se eu enviar outro funil para o lead</label><br>
         <label class="inline" id="rRestartBox"><input type="checkbox" id="rRestart" ${r.restartOnReply !== false ? 'checked' : ''}> Quando o lead responder, recomeçar da etapa 1</label>
+        <div style="margin-top:6px"><label class="inline"><input type="checkbox" id="rCold" ${r.coldOnEnd ? 'checked' : ''}> No fim, se não responder em <input type="number" id="rColdH" min="1" value="${r.coldHours || 24}" style="width:64px"> h, colocar a etiqueta <b>${esc(ZF.coldStage(DB.settings))}</b></label></div>
         <div id="rReplyBox" style="margin-top:6px">Se o lead não responder em até <input type="number" id="rRw" min="0" value="${r.replyWindowHours == null ? 72 : r.replyWindowHours}" style="width:80px"> horas, encerrar <span class="hint">(0 = esperar para sempre)</span></div>
         <div style="margin-top:8px"><label class="inline"><input type="checkbox" id="rWin" ${w.enabled ? 'checked' : ''}> Só enviar no horário:</label>
           <input type="text" id="rWs" value="${esc(w.start)}" style="width:70px"> até <input type="text" id="rWe" value="${esc(w.end)}" style="width:70px">
@@ -1300,6 +1307,8 @@
       if (!r.name) return toast('Dê um nome à regra');
       r.mode = $('#rMode').value;
       r.triggers = $$('.trg').filter((c) => c.checked).map((c) => c.value);
+      r.coldOnEnd = $('#rCold').checked;
+      r.coldHours = Math.max(1, Number($('#rColdH').value) || 24);
       if (!r.stages.length) return toast('Adicione pelo menos uma etapa');
       const bad = r.stages.findIndex((x) => !x.targetId);
       if (bad >= 0) return toast('Escolha o que enviar na etapa ' + (bad + 1));
@@ -2176,7 +2185,8 @@
     openModal(`<h2>${isNew ? 'Nova campanha' : 'Editar campanha'}</h2>
       <label>Nome</label><input type="text" id="cName" value="${esc(c.name)}" placeholder="Ex: Remarketing Black Friday">
       <label style="margin-top:12px">Contatos – um por linha: <code>numero,nome</code></label><textarea id="cList" style="min-height:130px" placeholder="11999998888,Maria\n21988887777,João">${esc(c.contacts.map((x) => x.number + (x.name ? ',' + x.name : '')).join('\n'))}</textarea>
-      <div class="bar" style="margin-top:6px"><input type="file" id="cCsv" accept=".csv,.txt" style="max-width:240px"><button type="button" class="btn sm sec" id="cGrpBtn">👥 Puxar membros de grupo</button><span class="hint" id="cCount"></span></div>
+      <div class="bar" style="margin-top:6px"><input type="file" id="cCsv" accept=".csv,.txt" style="max-width:240px"><button type="button" class="btn sm sec" id="cGrpBtn">👥 Puxar membros de grupo</button><button type="button" class="btn sm sec" id="cLblBtn">🏷️ Puxar contatos de etiqueta</button><span class="hint" id="cCount"></span></div>
+      <div id="cLbl" style="display:none" class="bar"><select id="cLblSel" style="max-width:260px"><option value="">Carregando etiquetas…</option></select><button type="button" class="btn sm" id="cLblAdd">Adicionar à lista</button><span class="hint" id="cLblMsg"></span></div>
       <div id="cGrp" style="display:none">${GROUP_BOX_HTML}<div class="bar" style="margin:-4px 0 10px"><label class="inline" style="margin:0"><input type="checkbox" id="cSkipAdm"> Pular administradores</label><span class="grow"></span><button type="button" class="btn sm" id="cGrpAdd">Adicionar membros à lista</button></div><div class="hint" id="cGrpMsg"></div></div>
       <div class="hint">Aceita CSV (número na 1ª coluna, nome na 2ª). Números repetidos são removidos.</div>
       <label style="margin-top:14px">Mensagens — variações</label>
@@ -2228,6 +2238,39 @@
     draw();
     $('#cAddT').onclick = () => { read(); c.variants.push({ kind: 'text', text: '' }); draw(); setTimeout(() => { const t = $$('.cvar textarea', box).pop(); if (t) t.focus(); }, 20); };
     $('#cAddA').onclick = () => { read(); c.variants.push({ kind: 'item', itemId: '' }); draw(); setTimeout(() => { const b = $$('.cvar .pk-btn', box).pop(); if (b) b.click(); }, 30); };
+    // ----- contatos de uma etiqueta do WhatsApp Business
+    $('#cLblBtn').onclick = async () => {
+      const box = $('#cLbl');
+      box.style.display = box.style.display === 'none' ? '' : 'none';
+      if (box.style.display === 'none') return;
+      const r = await bgMsg({ type: 'wa:call', method: 'labelsAll' });
+      if (r.error) return ($('#cLblSel').innerHTML = `<option value="">⚠️ ${esc(r.error)}</option>`);
+      $('#cLblSel').innerHTML = '<option value="">— escolha a etiqueta —</option>' + r.result.map((l) => `<option value="${esc(l.id)}">${esc(l.name)} (${l.count})</option>`).join('');
+    };
+    $('#cLblAdd').onclick = async () => {
+      const id = $('#cLblSel').value;
+      if (!id) return toast('Escolha a etiqueta');
+      const btn = $('#cLblAdd');
+      btn.disabled = true;
+      btn.textContent = 'Puxando…';
+      const r = await bgMsg({ type: 'wa:call', method: 'chatsByLabel', args: [id] });
+      btn.disabled = false;
+      btn.textContent = 'Adicionar à lista';
+      if (r.error) return toast('⚠️ ' + r.error);
+      const existing = new Set(parseNumbers($('#cList').value).map((x) => x.number));
+      const lines = [];
+      let dup = 0, hidden = 0;
+      for (const c of r.result) {
+        const num = ZF.normalizeNumber(c.number ? '+' + c.number : '');
+        if (!num) { hidden++; continue; }
+        if (existing.has(num)) { dup++; continue; }
+        existing.add(num);
+        lines.push(num + (c.name ? ',' + c.name.replace(/[,;\n]/g, ' ') : ''));
+      }
+      if (lines.length) $('#cList').value = ($('#cList').value.trim() ? $('#cList').value.trim() + '\n' : '') + lines.join('\n');
+      $('#cLblMsg').innerHTML = `✅ <b>${lines.length}</b> adicionado(s)` + (dup ? ` · ${dup} já estavam` : '') + (hidden ? ` · ${hidden} sem número visível` : '');
+      count();
+    };
     // ----- membros de grupo
     let getG = null;
     $('#cGrpBtn').onclick = () => {
@@ -2529,6 +2572,106 @@
   }
 
   // ------------------------------------------------------------ HISTÓRICO
+  // ---------------------------------------------------------------- LEADS (jornada + etiquetas do WhatsApp Business)
+  function agoTxt(t) {
+    if (!t) return '';
+    const m = Math.max(0, Math.round((Date.now() - t) / 60000));
+    if (m < 60) return m + ' min';
+    const h = Math.round(m / 60);
+    if (h < 48) return h + ' h';
+    return Math.round(h / 24) + ' d';
+  }
+  let leadsQ = '';
+  async function renderLeads() {
+    const L = (await chrome.storage.local.get('leads')).leads || {};
+    DB.leads = L;
+    const js = ZF.journeys(DB.settings);
+    const ids = Object.keys(L);
+    let h = `<h1>Leads</h1><p class="sub">Cada funil enviado coloca o lead numa etapa — e a etiqueta certa no WhatsApp Business (a anterior sai sozinha). Escolha a etiqueta de cada funil em <b>Funis → Editar → 🏷️ Ao enviar, colocar etiqueta</b>. O remarketing pode começar "quando entrar na etiqueta X".</p>
+      <div class="section" style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+        <label class="inline" style="margin:0"><input type="checkbox" id="lOn" ${DB.settings.labelsOn !== false ? 'checked' : ''}> Etiquetar automaticamente no WhatsApp</label>
+        <input type="text" id="lQ" placeholder="Buscar lead (nome ou número)…" value="${esc(leadsQ)}" style="max-width:280px">
+        <span class="hint">${ids.length} lead(s) acompanhados</span></div>`;
+    const qn = ZF.normalizeText(leadsQ);
+    const match = (id) => !qn || ZF.normalizeText((L[id].name || '') + ' ' + id).includes(qn);
+    for (const j of js) {
+      const inStage = (st) => ids.filter((id) => match(id) && Object.values(L[id].stages || {}).some((x) => x.stage === st));
+      const reached = (st) => ids.filter((id) => (L[id].path || []).some((p) => p.s === st)).length;
+      const first = reached(j.stages[0]) || 0;
+      h += `<div class="section"><h3>${esc(j.name)}</h3>`;
+      if (j.stages.length > 1 && j.id !== 'alunos') {
+        h += `<div class="lconv">` + j.stages.map((st, i) => {
+          const n = reached(st);
+          const pct = first && i ? ' · ' + Math.round((n / first) * 100) + '%' : '';
+          return `<span><b>${n}</b> ${esc(st)}<small>${pct}</small></span>`;
+        }).join('<i>→</i>') + `</div>`;
+      }
+      h += `<div class="kanban">` + j.stages.map((st) => {
+        const list = inStage(st).sort((a, b) => ((L[b].stages && Object.values(L[b].stages).find((x) => x.stage === st) || {}).since || 0) - ((L[a].stages && Object.values(L[a].stages).find((x) => x.stage === st) || {}).since || 0));
+        const cards = list.slice(0, 60).map((id) => {
+          const l = L[id];
+          const since = (Object.values(l.stages || {}).find((x) => x.stage === st) || {}).since;
+          const replied = l.lastIn && l.lastIn > (l.lastOut || 0);
+          const num = '+' + id.replace(/@.*/, '');
+          return `<div class="lcard" data-lead="${esc(id)}" title="${esc(num)}${l.lastFunnel ? ' · último: ' + esc(l.lastFunnel) : ''}"><b>${esc(l.name || num)}</b>
+            <small>há ${agoTxt(since)} nesta etapa</small>${replied ? '<span class="lrep">💬 respondeu</span>' : l.lastOut ? `<small class="lwait">⏳ sem resposta há ${agoTxt(l.lastOut)}</small>` : ''}${l.labelErr ? `<small class="lerr" title="${esc(l.labelErr)}">⚠️ etiqueta não aplicada</small>` : ''}</div>`;
+        }).join('');
+        return `<div class="kcol"><div class="khead">🏷️ ${esc(st)} <span>${list.length}</span></div>${cards || '<div class="hint" style="padding:8px">—</div>'}${list.length > 60 ? `<div class="hint" style="padding:6px">+${list.length - 60}…</div>` : ''}</div>`;
+      }).join('') + `</div></div>`;
+    }
+    h += `<div class="section"><h3>Etiquetas do WhatsApp</h3><p class="hint">Veja todas as etiquetas da sua conta Business. As que não são da jornada você pode juntar numa etapa (os contatos passam para ela) e depois apagar.</p>
+      <div class="bar"><button class="btn sm sec" id="lLoad">🔄 Carregar etiquetas do WhatsApp</button><button class="btn sm sec" id="lMake">➕ Criar as etiquetas da jornada</button></div><div id="lWa"></div></div>`;
+    $('#main').innerHTML = h;
+    $('#lOn').onchange = async (e) => {
+      DB.settings.labelsOn = e.target.checked;
+      await persist('settings');
+      toast(e.target.checked ? 'Etiquetas automáticas ligadas' : 'Etiquetas automáticas desligadas');
+    };
+    $('#lQ').oninput = (e) => {
+      leadsQ = e.target.value;
+      clearTimeout(renderLeads.t);
+      renderLeads.t = setTimeout(() => renderLeads().then(() => { const q = $('#lQ'); if (q) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); } }), 250);
+    };
+    $('#lMake').onclick = async () => {
+      const r = await bgMsg({ type: 'wa:call', method: 'labelsEnsure', args: [ZF.allStages(DB.settings)] });
+      if (r.error) return toast('⚠️ ' + r.error);
+      toast(r.result.created.length ? 'Criadas: ' + r.result.created.join(', ') : 'Todas já existiam ✅');
+      loadWa();
+    };
+    const loadWa = async () => {
+      $('#lWa').innerHTML = '<div class="hint">Carregando…</div>';
+      const r = await bgMsg({ type: 'wa:call', method: 'labelsAll' });
+      if (r.error) return ($('#lWa').innerHTML = `<div class="empty">⚠️ ${esc(r.error)}</div>`);
+      const stages = ZF.allStages(DB.settings);
+      const norm = (x) => ZF.normalizeText(x);
+      const rows = r.result.sort((a, b) => (stages.some((s2) => norm(s2) === norm(a.name)) ? 0 : 1) - (stages.some((s2) => norm(s2) === norm(b.name)) ? 0 : 1) || b.count - a.count);
+      $('#lWa').innerHTML = rows.length ? '<div class="list">' + rows.map((l) => {
+        const isStage = stages.some((s2) => norm(s2) === norm(l.name));
+        return `<div class="lrow card"><div class="lmain"><div class="lname"><span class="ldot" style="background:${esc(l.color || '#888')}"></span>${esc(l.name)} ${isStage ? '<span class="ftag stag">jornada</span>' : ''}</div><div class="lsub">${l.count} contato(s)</div></div>
+          <div class="lact">${isStage ? '' : `<select data-to="${esc(l.id)}"><option value="">mover contatos para…</option>${stageOptions('').replace('<option value="">— nenhuma —</option>', '')}</select><button class="btn sm sec" data-move="${esc(l.id)}">Mover</button>`}
+          <button class="btn sm red" data-ldel="${esc(l.id)}" data-name="${esc(l.name)}" data-n="${l.count}">Apagar</button></div></div>`;
+      }).join('') + '</div>' : '<div class="empty">Nenhuma etiqueta (sua conta é WhatsApp Business?)</div>';
+      $$('[data-move]').forEach((b) => (b.onclick = async () => {
+        const to = $(`[data-to="${b.dataset.move}"]`).value;
+        if (!to) return toast('Escolha a etapa de destino');
+        b.disabled = true;
+        b.textContent = 'Movendo…';
+        const res = await bgMsg({ type: 'wa:call', method: 'labelMove', args: [b.dataset.move, to] });
+        if (res.error) toast('⚠️ ' + res.error);
+        else toast(res.result.moved + ' contato(s) movidos para ' + to + ' ✅');
+        loadWa();
+      }));
+      $$('[data-ldel]').forEach((b) => (b.onclick = async () => {
+        if (!confirm('Apagar a etiqueta "' + b.dataset.name + '" do WhatsApp?' + (+b.dataset.n ? '\n' + b.dataset.n + ' contato(s) ficam sem ela (as conversas não são apagadas).' : '') + '\nIsso não dá para desfazer.')) return;
+        const res = await bgMsg({ type: 'wa:call', method: 'labelDelete', args: [b.dataset.ldel] });
+        if (res.error) toast('⚠️ ' + res.error);
+        else toast('Etiqueta apagada');
+        loadWa();
+      }));
+    };
+    $('#lLoad').onclick = loadWa;
+  }
+
   function renderHistory() {
     let h = `<h1>Histórico</h1><p class="sub">Últimos 500 envios (manuais, gatilhos, agendamentos e campanhas).</p>
       <div class="bar"><span class="grow"></span><button class="btn sec" id="clrH">Limpar histórico</button></div>`;

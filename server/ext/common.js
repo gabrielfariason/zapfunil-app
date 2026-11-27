@@ -82,8 +82,43 @@ const ZF = (() => {
       .some((w) => t === w || (w.includes(' ') ? t.includes(w) : new RegExp('(^|\\W)' + w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '($|\\W)').test(t) && t.split(' ').length <= 6));
   }
 
-  const KEYS = ['items', 'funnels', 'triggers', 'schedules', 'campaigns', 'settings', 'triggerLog', 'history', 'remarketing', 'rmktQueue', 'rmktBlock', 'stats', 'gLists', 'gPosts', 'gSchedules', 'gAuto'];
-  const OBJ_KEYS = ['triggerLog', 'rmktBlock', 'stats', 'gAuto'];
+  const KEYS = ['items', 'funnels', 'triggers', 'schedules', 'campaigns', 'settings', 'triggerLog', 'history', 'remarketing', 'rmktQueue', 'rmktBlock', 'stats', 'gLists', 'gPosts', 'gSchedules', 'gAuto', 'leads'];
+  const OBJ_KEYS = ['triggerLog', 'rmktBlock', 'stats', 'gAuto', 'leads'];
+
+  // ---- Jornada do lead: cada etapa = uma etiqueta do WhatsApp Business. O lead fica em 1 etapa por jornada;
+  // entrar numa etapa tira as outras da mesma jornada e as das jornadas em "clears".
+  const DEFAULT_JOURNEYS = [
+    { id: 'vendas', name: 'Vendas (APEX + Afiliado)', clears: ['frio'], stages: ['Abordado', 'Conversando', 'Apresentação', 'Proposta', 'Link enviado'] },
+    { id: 'nova', name: 'NOVA', clears: ['frio'], stages: ['NOVA Abordado', 'NOVA Conversando', 'NOVA Apresentação', 'NOVA Proposta'] },
+    { id: 'alunos', name: 'Alunos', multi: true, clears: ['vendas', 'nova', 'frio'], stages: ['Aluno APEX', 'Aluno Afiliado', 'Aluno NOVA'] },
+    { id: 'frio', name: 'Frio', clears: [], stages: ['Frio'] }
+  ];
+  function journeys(settings) {
+    const j = settings && Array.isArray(settings.journeys) && settings.journeys.length ? settings.journeys : DEFAULT_JOURNEYS;
+    return j;
+  }
+  function journeyOf(settings, stage) {
+    return journeys(settings).find((j) => (j.stages || []).includes(stage)) || null;
+  }
+  // o que fazer ao entrar na etapa: { add: [etapa], remove: [...], journey }
+  function stagePlan(settings, stage) {
+    const js = journeys(settings);
+    const j = journeyOf(settings, stage);
+    if (!j) return { add: [stage], remove: [], journey: null };
+    const remove = j.multi ? [] : j.stages.filter((x) => x !== stage); // multi: pode ter várias (ex.: aluno de 2 produtos)
+    for (const id of j.clears || []) {
+      const o = js.find((x) => x.id === id);
+      if (o) remove.push(...o.stages);
+    }
+    return { add: [stage], remove: remove.filter((x) => x !== stage), journey: j.id };
+  }
+  function allStages(settings) {
+    return journeys(settings).flatMap((j) => j.stages || []);
+  }
+  function coldStage(settings) {
+    const f = journeys(settings).find((j) => j.id === 'frio');
+    return (f && f.stages && f.stages[0]) || 'Frio';
+  }
 
   // "2026-11-22" no fuso local (relatório por dia)
   function dayKey(t) {
@@ -116,6 +151,7 @@ const ZF = (() => {
         return st;
       })(),
       triggerLog: data.triggerLog || {},
+      leads: data.leads || {},
       history: data.history || [],
       remarketing: data.remarketing || [],
       rmktQueue: data.rmktQueue || [],
@@ -308,5 +344,5 @@ const ZF = (() => {
     return { n: bad.length, camp };
   }
 
-  return { campRetryFailed, DEFAULT_SETTINGS, setVariations, dayKey, folders, MEDIA, mediaKey, splitItems, getMedia, withMedia, fullItems, KEYS, OBJ_KEYS, UNIT, UNIT_LABEL, fmtDelay, nextAllowed, isOptOut, uid, load, save, normalizeNumber, applyVars, matchTrigger, normalizeText, typeLabel, typeIcon, fmtDuration, escapeHtml, greeting };
+  return { DEFAULT_JOURNEYS, journeys, journeyOf, stagePlan, allStages, coldStage, campRetryFailed, DEFAULT_SETTINGS, setVariations, dayKey, folders, MEDIA, mediaKey, splitItems, getMedia, withMedia, fullItems, KEYS, OBJ_KEYS, UNIT, UNIT_LABEL, fmtDelay, nextAllowed, isOptOut, uid, load, save, normalizeNumber, applyVars, matchTrigger, normalizeText, typeLabel, typeIcon, fmtDuration, escapeHtml, greeting };
 })();

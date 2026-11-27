@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ZapFunil",
-  "version": "1.13.6",
+  "version": "1.14.0",
   "description": "Funis, áudios, gatilhos, agendamentos e disparos no WhatsApp Web. 100% local e gratuito.",
   "icons": {
     "16": "icons/icon16.png",

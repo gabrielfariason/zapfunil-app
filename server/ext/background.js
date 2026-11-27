@@ -43,6 +43,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     });
     return true;
   }
+  // painel → WhatsApp (etiquetas etc.): tenta a aba que está no comando primeiro
+  if (msg && msg.type === 'wa:call') {
+    chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }).then(async (tabs) => {
+      let last = 'Abra o WhatsApp Web neste navegador';
+      for (const t of tabs) {
+        try {
+          const r = await chrome.tabs.sendMessage(t.id, { type: 'zf:call', method: msg.method, args: msg.args || [] });
+          if (r && 'result' in r) return sendResponse(r);
+          if (r && r.error) last = r.error;
+        } catch (e) {}
+      }
+      sendResponse({ error: last });
+    });
+    return true;
+  }
   if (msg && msg.type === 'wa:gmembers') {
     chrome.tabs.query({ url: 'https://web.whatsapp.com/*' }).then(async (tabs) => {
       let last = 'Abra o WhatsApp Web neste Chrome para puxar os membros';
@@ -421,3 +436,31 @@ async function migrateGroupSchedules() {
   await chrome.storage.local.set({ gPosts: posts, gSchedules: gs, schedules: keep, gMigrated: Date.now() });
 }
 setTimeout(() => migrateGroupSchedules().catch(() => {}), 2500);
+
+// Jornada do lead (1x): liga cada funil existente à sua etiqueta pelo nome — 1/2/3/4 APEX e Afiliado → Vendas,
+// NOVA 1–4 → NOVA, "link" → Link enviado. Funil que já tem etiqueta escolhida não é tocado.
+function stageForFunnel(name) {
+  const n = String(name || '').toLowerCase();
+  const num = (n.match(/(?:^|[^\d])([1-4])(?![\d.])/) || [])[1];
+  if (/^\s*nova\b/.test(n) && num) return ['NOVA Abordado', 'NOVA Conversando', 'NOVA Apresentação', 'NOVA Proposta'][num - 1];
+  if (/apex|afiliado/.test(n)) {
+    if (/link/.test(n)) return 'Link enviado';
+    if (num) return ['Abordado', 'Conversando', 'Apresentação', 'Proposta'][num - 1];
+  }
+  return '';
+}
+async function seedFunnelStages() {
+  const d = await chrome.storage.local.get(['funnels', 'zfStagesSeeded']);
+  if (d.zfStagesSeeded || !Array.isArray(d.funnels)) return;
+  let n = 0;
+  const funnels = d.funnels.map((f) => {
+    if (f.stage !== undefined) return f;
+    const s = stageForFunnel(f.name);
+    if (!s) return f;
+    n++;
+    return Object.assign({}, f, { stage: s });
+  });
+  if (n) await chrome.storage.local.set({ funnels });
+  await chrome.storage.local.set({ zfStagesSeeded: Date.now() });
+}
+setTimeout(() => seedFunnelStages().catch(() => {}), 6000);
