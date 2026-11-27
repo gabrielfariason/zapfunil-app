@@ -1,5 +1,5 @@
 /* ZapFunil – estilos dentro do WhatsApp Web. Tudo prefixado com zf- para não afetar o WhatsApp. */
-.zf-root, .zf-bar, .zf-confirm, .zf-sug, .zf-toast, .zf-save, .zf-sv {
+.zf-root, .zf-bar, .zf-confirm, .zf-sug, .zf-toast, .zf-save, .zf-sv, .zf-pop {
   /* Identidade Apex (dourado) sobre as cores do próprio WhatsApp – tema claro */
   --zf-bg: #ffffff; --zf-bg2: #f0f2f5; --zf-hover: #e9edef; --zf-ink: #111b21; --zf-mute: #667781; --zf-line: rgba(11, 20, 26, .1);
   --zf-acc: #f2b632; --zf-acc-t: #8f6400; --zf-acc-soft: rgba(242, 182, 50, .18); --zf-acc-ink: #1d1d1f; --zf-acc2: #25d366; --zf-yel: #f2b632; --zf-red: #d70015;
@@ -7,7 +7,7 @@
   --zf-head: #f0f2f5; --zf-chipbg: #ffffff; --zf-barbg: #f0f2f5;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Segoe UI", Roboto, sans-serif; font-size: 13.5px; color: var(--zf-ink); box-sizing: border-box;
 }
-.dark .zf-root, .dark .zf-bar, .dark .zf-confirm, .dark .zf-sug, .dark .zf-toast, .dark .zf-save, .dark .zf-sv, .dark.zf-root {
+.dark .zf-root, .dark .zf-bar, .dark .zf-confirm, .dark .zf-sug, .dark .zf-toast, .dark .zf-save, .dark .zf-sv, .dark .zf-pop, .dark.zf-root {
   --zf-bg: #233138; --zf-bg2: #1b262c; --zf-hover: #2f3e46; --zf-ink: #e9edef; --zf-mute: #8696a0; --zf-line: rgba(233, 237, 239, .1);
   --zf-acc-t: #f4c55c; --zf-acc-soft: rgba(242, 182, 50, .14); --zf-red: #ff6b61; --zf-shadow: 0 16px 40px rgba(0, 0, 0, .5);
   --zf-head: #1b262c; --zf-chipbg: #233138; --zf-barbg: #1b262c;
@@ -157,3 +157,36 @@
 .zf-camp-err { font-size: 11.5px; color: var(--zf-red) !important; white-space: normal !important; }
 .zf-camp-go { border: none; background: var(--zf-acc); color: var(--zf-acc-ink) !important; border-radius: 7px; cursor: pointer; padding: 3px 9px; font-size: 12px !important; font-weight: 600; white-space: nowrap; }
 .zf-camp-re { border: 1px solid var(--zf-line); background: var(--zf-bg); color: var(--zf-ink) !important; border-radius: 7px; cursor: pointer; padding: 3px 8px; font-size: 12px !important; white-space: nowrap; }
+/* painel: abrir funil/mensagem (▸) e "▶ daqui" */
+.zf-rowwrap { display: flex; align-items: center; gap: 2px; border-radius: 10px; }
+.zf-rowwrap .zf-row { flex: 1; min-width: 0; }
+.zf-row-exp { flex: none; width: 28px; height: 28px; border: none; border-radius: 8px; background: transparent; color: var(--zf-mute) !important; cursor: pointer; font-size: 13px !important; }
+.zf-row-exp:hover, .zf-open-row .zf-row-exp { background: var(--zf-bg2); color: var(--zf-ink) !important; }
+.zf-steps { margin: 0 6px 8px 40px; border-left: 2px solid var(--zf-line); padding: 2px 0 2px 8px; display: flex; flex-direction: column; gap: 2px; }
+.zf-step { display: flex; align-items: center; gap: 7px; padding: 4px 4px 4px 2px; border-radius: 8px; font-size: 12.5px; }
+.zf-step:hover { background: var(--zf-bg2); }
+.zf-step-wait { opacity: .7; }
+.zf-step-n { flex: none; width: 18px; height: 18px; border-radius: 50%; background: var(--zf-bg2); border: 1px solid var(--zf-line); font-size: 10.5px; display: inline-flex; align-items: center; justify-content: center; color: var(--zf-mute); }
+.zf-step-ic { flex: none; font-size: 13px; }
+.zf-step-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.zf-step-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--zf-ink); }
+.zf-step-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--zf-mute); font-size: 11.5px; }
+.zf-step-go { flex: none; border: 1px solid rgba(242, 182, 50, .45); background: transparent; color: var(--zf-yel) !important; border-radius: 7px; padding: 2px 8px; font-size: 11.5px !important; font-weight: 600; cursor: pointer; white-space: nowrap; opacity: .75; }
+.zf-step:hover .zf-step-go, .zf-step-go:focus { opacity: 1; }
+.zf-step-go:hover { background: var(--zf-acc-soft); }
+.zf-prev { flex-direction: row; align-items: flex-start; gap: 8px; }
+.zf-prev-txt { flex: 1; font-size: 12.5px; white-space: pre-wrap; max-height: 160px; overflow: auto; color: var(--zf-ink); }
+.zf-c-from { font-size: 12.5px; color: var(--zf-yel); margin: 2px 0; font-weight: 600; }
+/* barra: menu discreto (☰) e ▾ dos funis */
+.zf-bar-menu { flex: none; width: 26px; height: 26px; border-radius: 8px; border: 1px solid var(--zf-line); background: transparent; color: var(--zf-mute) !important; cursor: pointer; font-size: 13px !important; opacity: .7; }
+.zf-bar-menu:hover, .zf-bar-menu.zf-on { opacity: 1; color: var(--zf-ink) !important; }
+.zf-bar-menu.zf-on { border-color: rgba(242, 182, 50, .6); }
+.zf-chip-more { margin-left: 2px; margin-right: -4px; padding: 0 3px; border-radius: 6px; color: var(--zf-mute); font-size: 11px; line-height: 18px; }
+.zf-chip-more:hover { background: rgba(127, 127, 127, .2); color: var(--zf-ink); }
+.zf-pop { position: fixed; z-index: 100002; background: var(--zf-bg); color: var(--zf-ink); border: 1px solid var(--zf-line); border-radius: 12px; box-shadow: var(--zf-shadow); padding: 6px; max-width: 420px; max-height: 60vh; overflow: auto; animation: zf-pop .12s ease-out; }
+.zf-pop .zf-steps { margin: 4px 2px 2px; border-left: none; padding: 0; }
+.zf-pop-head { font-size: 12px; color: var(--zf-mute); padding: 4px 6px 6px; border-bottom: 1px solid var(--zf-line); margin-bottom: 4px; }
+.zf-pop-menu { display: flex; flex-direction: column; min-width: 170px; }
+.zf-pop-opt { text-align: left; border: none; background: transparent; color: var(--zf-ink) !important; padding: 7px 10px; border-radius: 8px; cursor: pointer; font-size: 13px !important; }
+.zf-pop-opt:hover { background: var(--zf-bg2); }
+.zf-pop-opt.zf-on { background: var(--zf-acc-soft); font-weight: 600; }

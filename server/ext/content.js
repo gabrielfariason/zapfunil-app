@@ -1508,6 +1508,7 @@
     if (st) st.textContent = waReady ? (isLeader ? 'conectado' : localLeader ? 'conectado (servidor 24h no comando)' : 'conectado (outra aba roda os gatilhos)') : 'aguardando WhatsApp…';
   }
 
+  var panelOpen = new Set(); // itens/funis abertos (▸) no painel
   function renderList() {
     if (!listEl || !DB) return;
     const q = ZF.normalizeText(searchEl.value).replace(/^\//, '');
@@ -1595,15 +1596,47 @@
         else if (o.type === 'audio') sub = 'Áudio ' + ZF.fmtDuration(o.duration);
         else sub = o.caption ? o.caption.slice(0, 60) : ZF.typeLabel(o.type);
       }
-      const row = el('button', { class: 'zf-row', title: r.kind === 'item' && o.type === 'text' ? o.text : o.name, onclick: () => sendFromPanel(r) }, [
-        el('span', { class: 'zf-row-icon', text: icon }),
-        el('span', { class: 'zf-row-main' }, [
-          el('span', { class: 'zf-row-name' }, [o.name || '(sem nome)', o.shortcut ? el('em', { text: ' /' + o.shortcut }) : null]),
-          el('span', { class: 'zf-row-sub', text: sub })
-        ])
+      const key = r.kind + ':' + o.id;
+      const open = panelOpen.has(key);
+      const row = el('div', { class: 'zf-rowwrap' + (open ? ' zf-open-row' : '') }, [
+        el('button', { class: 'zf-row', title: 'Enviar (pede confirmação)', onclick: () => confirmAndSend({ kind: r.kind, obj: o }) }, [
+          el('span', { class: 'zf-row-icon', text: icon }),
+          el('span', { class: 'zf-row-main' }, [
+            el('span', { class: 'zf-row-name' }, [o.name || '(sem nome)', o.shortcut ? el('em', { text: ' /' + o.shortcut }) : null]),
+            el('span', { class: 'zf-row-sub', text: sub })
+          ])
+        ]),
+        el('button', { class: 'zf-row-exp', title: open ? 'Fechar' : r.kind === 'funnel' ? 'Ver mensagens do funil' : 'Ver conteúdo', onclick: () => {
+          if (open) panelOpen.delete(key);
+          else panelOpen.add(key);
+          renderList();
+        } }, [open ? '▾' : '▸'])
       ]);
       listEl.appendChild(row);
+      if (open) listEl.appendChild(r.kind === 'funnel' ? funnelStepsEl(o) : itemPreviewEl(o));
     });
+  }
+  // aberto no painel: mensagens do funil numeradas, cada uma com "▶ daqui" (envia dela para baixo)
+  function funnelStepsEl(f, onPick) {
+    const box = el('div', { class: 'zf-steps' });
+    f.steps.forEach((st, i) => {
+      const inf = stepInfo(st);
+      box.appendChild(el('div', { class: 'zf-step' + (inf.send ? '' : ' zf-step-wait') }, [
+        el('span', { class: 'zf-step-n', text: String(i + 1) }),
+        el('span', { class: 'zf-step-ic', text: inf.icon }),
+        el('span', { class: 'zf-step-main' }, [el('span', { class: 'zf-step-name', text: inf.name }), inf.sub ? el('span', { class: 'zf-step-sub', text: inf.sub }) : null]),
+        inf.send ? el('button', { class: 'zf-step-go', title: 'Enviar a partir desta mensagem (ela e as de baixo)', onclick: (e) => {
+          e.stopPropagation();
+          if (onPick) onPick();
+          confirmAndSend({ kind: 'funnel', obj: f, fromStep: i });
+        } }, [i ? '▶ daqui' : '▶ tudo']) : null
+      ]));
+    });
+    return box;
+  }
+  function itemPreviewEl(it) {
+    const txt = it.type === 'text' ? it.text || '' : it.type === 'audio' ? '🎤 Áudio de ' + ZF.fmtDuration(it.duration) + (it.asFile ? ' (como arquivo)' : ' (como gravado na hora)') : (it.caption ? 'Legenda: ' + it.caption : ZF.typeLabel(it.type)) + (it.filename ? ' · ' + it.filename : '');
+    return el('div', { class: 'zf-steps zf-prev' }, [el('div', { class: 'zf-prev-txt', text: txt }), el('button', { class: 'zf-step-go', onclick: () => confirmAndSend({ kind: 'item', obj: it }) }, ['▶ enviar'])]);
   }
 
   function renderRmktTab(q) {
@@ -1708,6 +1741,19 @@
     } catch (e) {}
   }
 
+  // "enviar a partir da mensagem N": mesmo funil (mesmo id → etiqueta e remarketing iguais), começando da etapa N
+  function partialFunnel(f, k) {
+    const steps = f.steps.slice(k).map((st, i) => (i === 0 ? Object.assign({}, st, { delay: 0 }) : st));
+    return Object.assign({}, f, { steps, name: f.name + ' (da ' + (k + 1) + 'ª em diante)' });
+  }
+  // linha de cada etapa do funil (para o funil aberto no painel/barra e no celular)
+  function stepInfo(st) {
+    if (st.kind === 'wait_reply') return { icon: '⏳', name: 'Aguardar resposta' + (st.timeoutMin ? ' (até ' + st.timeoutMin + ' min)' : ''), sub: '', send: false };
+    const it = st.inline || getItem(st.itemId);
+    if (!it) return { icon: '⚠️', name: '(item apagado)', sub: '', send: false };
+    const sub = it.type === 'text' ? ZF.applyVars(it.text || '', {}).slice(0, 90) : it.type === 'audio' ? 'Áudio ' + ZF.fmtDuration(it.duration) : it.caption ? it.caption.slice(0, 60) : ZF.typeLabel(it.type);
+    return { icon: ZF.typeIcon(it.type), name: it.name || '', sub: sub + (st.delay ? ' · espera ' + ZF.fmtDelay(st.delay) : ''), send: true };
+  }
   async function sendFromPanel(r) {
     if (!waReady) return toast('WhatsApp ainda carregando…', 'warn');
     let chat;
@@ -1717,7 +1763,7 @@
       return toast(e.message, 'err');
     }
     if (!chat) return toast('Abra uma conversa primeiro', 'warn');
-    const funnel = r.kind === 'funnel' ? r.obj : funnelFromItem(r.obj);
+    const funnel = r.kind === 'funnel' ? (r.fromStep ? partialFunnel(r.obj, r.fromStep) : r.obj) : funnelFromItem(r.obj);
     const queued = running.has(chat.id);
     toast(queued ? '⏳ Na fila: ' + funnel.name : (r.kind === 'funnel' ? 'Funil iniciado: ' : 'Enviando: ') + funnel.name);
     try {
@@ -1782,11 +1828,17 @@
     const btnOk = el('button', { class: 'zf-c-ok', onclick: go }, ['Enviar ↵']);
     confirmEl = el('div', { class: 'zf-confirm', role: 'dialog' }, [
       el('div', { class: 'zf-c-title' }, [entryIcon(r) + ' ', el('b', { text: r.obj.name })]),
+      r.fromStep ? el('div', { class: 'zf-c-from', text: '▶ a partir da mensagem ' + (r.fromStep + 1) + ' (' + (r.obj.steps.length - r.fromStep) + ' de ' + r.obj.steps.length + ')' }) : null,
       el('div', { class: 'zf-c-sub', text: 'para ' + (chat.name || chat.id.replace(/@.*/, '')) + (running.has(chat.id) ? ' · entra na fila' : '') }),
       el('div', { class: 'zf-c-btns' }, [el('button', { class: 'zf-c-no', onclick: closeConfirm }, ['Cancelar']), btnOk])
     ]);
-    confirmEl.style.left = Math.max(12, rect.left + 16) + 'px';
-    confirmEl.style.bottom = Math.max(12, window.innerHeight - rect.top + 8) + 'px';
+    if (footer) {
+      confirmEl.style.left = Math.max(12, rect.left + 16) + 'px';
+      confirmEl.style.bottom = Math.min(window.innerHeight - 140, Math.max(12, window.innerHeight - rect.top + 8)) + 'px';
+    } else {
+      confirmEl.style.left = Math.max(12, window.innerWidth / 2 - 160) + 'px';
+      confirmEl.style.bottom = '90px';
+    }
     confirmEl.addEventListener('keydown', (e) => {
       if (e.key === 'Escape') {
         e.preventDefault();
@@ -1797,7 +1849,7 @@
     btnOk.focus();
   }
   document.addEventListener('mousedown', (e) => {
-    if (confirmEl && !confirmEl.contains(e.target) && !e.target.closest('.zf-chip,.zf-sug-row')) closeConfirm();
+    if (confirmEl && !confirmEl.contains(e.target) && !e.target.closest('.zf-chip,.zf-sug-row,.zf-row,.zf-step-go,.zf-pop')) closeConfirm();
   }, true);
 
   // ---- barra abaixo da caixa de mensagem
@@ -1806,20 +1858,58 @@
     barHidden = !!d.barHidden;
     ensureBar();
   });
+  // filtro discreto da barra (☰): Tudo (padrão), só funis, só mensagens…
+  let barFilter = 'all';
+  chrome.storage.local.get('barFilter').then((d) => {
+    if (d.barFilter) {
+      barFilter = d.barFilter;
+      barSig = '';
+      ensureBar();
+    }
+  });
+  const BAR_FILTERS = [['all', '✨ Tudo'], ['funnel', '🔁 Funis'], ['text', '💬 Mensagens'], ['audio', '🎤 Áudios'], ['media', '🖼️ Mídias'], ['document', '📄 Documentos']];
+  const barPass = (r) => barFilter === 'all' || (barFilter === 'funnel' ? r.kind === 'funnel' : r.kind === 'item' && (barFilter === 'media' ? r.obj.type === 'image' || r.obj.type === 'video' : r.obj.type === barFilter));
+  let popEl = null;
+  function closePop() {
+    if (popEl) popEl.remove();
+    popEl = null;
+  }
+  function openPop(anchor, content) {
+    closePop();
+    const rc = anchor.getBoundingClientRect();
+    popEl = el('div', { class: 'zf-pop' }, [content]);
+    document.body.appendChild(popEl);
+    const w = popEl.offsetWidth;
+    popEl.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, rc.left)) + 'px';
+    popEl.style.bottom = window.innerHeight - rc.top + 8 + 'px';
+  }
+  document.addEventListener('mousedown', (e) => {
+    if (popEl && !popEl.contains(e.target) && !e.target.closest('.zf-bar-menu,.zf-chip-more')) closePop();
+  }, true);
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && popEl) closePop();
+  }, true);
   function buildBar() {
     const bar = el('div', { class: 'zf-bar', id: 'zf-bar' });
     const scroller = el('div', { class: 'zf-bar-scroll' });
-    const entries = allEntries();
+    const entries = allEntries().filter(barPass);
     let lastG = -1;
     entries.forEach((r) => {
       if (r.g !== lastG && lastG !== -1) scroller.appendChild(el('span', { class: 'zf-bar-sep' }));
       lastG = r.g;
-      scroller.appendChild(el('button', { class: 'zf-chip zf-chip-' + (r.kind === 'funnel' ? 'funnel' : r.obj.type), title: (r.obj.type === 'text' ? r.obj.text : r.obj.name) || '', onclick: () => confirmAndSend(r) }, [
+      const isF = r.kind === 'funnel';
+      const chip = el('button', { class: 'zf-chip zf-chip-' + (isF ? 'funnel' : r.obj.type), title: (r.obj.type === 'text' ? r.obj.text : r.obj.name) || '', onclick: () => confirmAndSend(r) }, [
         el('span', { class: 'zf-chip-ic', text: entryIcon(r) }),
-        el('span', { text: r.obj.name || '(sem nome)' })
-      ]));
+        el('span', { text: r.obj.name || '(sem nome)' }),
+        isF ? el('span', { class: 'zf-chip-more', title: 'Ver mensagens / enviar a partir de uma', onclick: (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          openPop(chip, el('div', {}, [el('div', { class: 'zf-pop-head', text: '🔁 ' + r.obj.name + ' · clique em ▶ para enviar daquela em diante' }), funnelStepsEl(r.obj, closePop)]));
+        } }, ['▾']) : null
+      ]);
+      scroller.appendChild(chip);
     });
-    if (!entries.length) scroller.appendChild(el('span', { class: 'zf-bar-empty', text: 'Crie mensagens e funis no painel ⚙️ para aparecerem aqui' }));
+    if (!entries.length) scroller.appendChild(el('span', { class: 'zf-bar-empty', text: barFilter !== 'all' ? 'Nada nesse filtro — toque em ☰ para mudar' : 'Crie mensagens e funis no painel ⚙️ para aparecerem aqui' }));
     scroller.addEventListener('wheel', (e) => {
       if (Math.abs(e.deltaY) > Math.abs(e.deltaX)) {
         scroller.scrollLeft += e.deltaY;
@@ -1827,6 +1917,16 @@
       }
     }, { passive: false });
     bar.appendChild(el('button', { class: 'zf-bar-logo', title: 'Abrir painel ZapFunil', onclick: () => { if (!root.classList.contains('zf-open')) togglePanel(); } }, ['⚡']));
+    const menuBtn = el('button', { class: 'zf-bar-menu' + (barFilter !== 'all' ? ' zf-on' : ''), title: 'Filtrar a barra', onclick: () => {
+      openPop(menuBtn, el('div', { class: 'zf-pop-menu' }, BAR_FILTERS.map(([k, t]) => el('button', { class: 'zf-pop-opt' + (k === barFilter ? ' zf-on' : ''), onclick: () => {
+        barFilter = k;
+        chrome.storage.local.set({ barFilter: k });
+        closePop();
+        barSig = '';
+        ensureBar();
+      } }, [t]))));
+    } }, [barFilter === 'all' ? '☰' : (BAR_FILTERS.find((x) => x[0] === barFilter) || ['', '☰'])[1].split(' ')[0]]);
+    bar.appendChild(menuBtn);
     bar.appendChild(scroller);
     bar.appendChild(el('button', { class: 'zf-bar-hide', title: 'Esconder barra (reabre pelo ⚡ no canto)', onclick: () => {
       barHidden = true;
@@ -1844,7 +1944,7 @@
       if (cur) cur.remove();
       return;
     }
-    const sig = JSON.stringify([DB.funnels.map((f) => [f.id, f.name]), DB.items.map((i) => [i.id, i.name, i.type])]);
+    const sig = JSON.stringify([barFilter, DB.funnels.map((f) => [f.id, f.name, f.steps.length]), DB.items.map((i) => [i.id, i.name, i.type])]);
     if (cur && cur.previousElementSibling === footer && sig === barSig) return;
     if (cur) cur.remove();
     barSig = sig;
@@ -2228,8 +2328,10 @@
     const p = cmd.payload || {};
     switch (cmd.kind) {
       case 'send': {
-        const funnel = targetToFunnel(p.targetType, p.targetId);
+        let funnel = targetToFunnel(p.targetType, p.targetId);
         if (!funnel) throw new Error('Funil/item não existe mais');
+        const from = Math.max(0, parseInt(p.fromStep, 10) || 0);
+        if (from && p.targetType === 'funnel' && from < funnel.steps.length) funnel = partialFunnel(funnel, from);
         const c = await resolveTarget(p.target);
         const queued = running.has(c.id);
         // não espera terminar: o celular acompanha pelo histórico
@@ -2346,7 +2448,7 @@
       unread: chats.reduce((s, c) => s + (c.unread > 0 ? c.unread : c.unread < 0 ? 1 : 0), 0),
       paused: !!DB.settings.automationsPaused,
       items: DB.items.map((i) => ({ id: i.id, type: i.type, name: i.name, shortcut: i.shortcut || '', text: i.type === 'text' ? (i.text || '').slice(0, 160) : (i.caption || '').slice(0, 100), duration: i.duration || 0 })),
-      funnels: DB.funnels.map((f) => ({ id: f.id, name: f.name, steps: f.steps.length })),
+      funnels: DB.funnels.map((f) => ({ id: f.id, name: f.name, steps: f.steps.length, list: f.steps.map((st) => { const x = stepInfo(st); return { i: x.icon, n: x.name.slice(0, 60), s: x.send ? 1 : 0 }; }) })),
       rules: (DB.remarketing || []).map((r) => ({ id: r.id, name: r.name, enabled: !!r.enabled, stages: r.stages.length, mode: r.mode })),
       queue: (DB.rmktQueue || []).filter(ACTIVE).slice(-200).map((e) => ({ id: e.id, chatId: e.chatId, name: e.name, rule: ruleName(e.ruleId), stage: e.stageIdx + 1, total: ((DB.remarketing || []).find((r) => r.id === e.ruleId) || { stages: [] }).stages.length, dueAt: e.dueAt, status: e.status, mode: e.mode })),
       campaigns: DB.campaigns.map((c) => ({ id: c.id, name: c.name, status: c.status, total: c.contacts.length, progress: c.progress || 0, sent: c.sent || 0, failed: c.failed || 0 })),

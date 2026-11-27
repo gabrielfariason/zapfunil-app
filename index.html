@@ -138,6 +138,7 @@ label.l{display:block;font-size:13px;color:var(--mute);margin:14px 0 6px}
 .logo svg{width:34px;height:34px}
 .login h1{font-family:var(--serif);font-weight:400;font-size:40px;margin:0 0 6px}
 @media (prefers-reduced-motion:reduce){.chat,.sheet,.sheet>div,.toast{transition:none;animation:none}}
+.stepsPick .stp{display:flex;align-items:center;gap:10px;cursor:pointer}.stepsPick .stp input{accent-color:#f2b632;width:18px;height:18px;flex:none}.stepsPick .stp.off{opacity:.5}
 </style>
 </head>
 <body>
@@ -255,7 +256,7 @@ label.l{display:block;font-size:13px;color:var(--mute);margin:14px 0 6px}
 <script src="lame.min.js"></script>
 <script>
 {
-const APP_VERSION = '2.1.1';
+const APP_VERSION = '2.2.0';
 const SB_URL = 'https://kjntxjencxxauhzulera.supabase.co';
 const SB_KEY = 'sb_publishable_UsD2jKHI97zFRkSHkM87iA_G0KKfrWq';
 const $ = (s, r) => (r || document).querySelector(s);
@@ -401,9 +402,18 @@ function sheet(html, bind) { $('#sheetBox').innerHTML = '<div class="grab"></div
 function closeSheet() { $('#sheet').classList.add('hide'); }
 $('#sheet').addEventListener('click', (e) => { if (e.target.id === 'sheet') closeSheet(); });
 function confirmSend(entry, target, name) {
-  sheet(`<h3>Enviar agora?</h3><p>${esc(entry.name)} → ${esc(name)}</p><div style="display:flex;gap:10px"><button class="btn sec block" id="no">Cancelar</button><button class="btn block" id="ok">Enviar</button></div>`, (box) => {
+  // funil: dá para escolher de qual mensagem começar (ela e as de baixo)
+  const f = entry.kind === 'funnel' ? (S.funnels || []).find((x) => x.id === entry.id) : null;
+  const list = f && Array.isArray(f.list) ? f.list : null;
+  const steps = list ? `<div class="grp" style="padding:4px 0 6px">Começar da mensagem</div><div class="card stepsPick" style="margin:0 0 12px;max-height:46vh;overflow:auto">${list.map((x, i) => `<label class="row stp${x.s ? '' : ' off'}"><input type="radio" name="from" value="${i}" ${i === 0 ? 'checked' : ''} ${x.s ? '' : 'disabled'}><span class="ic" style="font-size:17px">${esc(x.i)}</span><span class="col"><span class="t">${i + 1}. ${esc(x.n)}</span>${i === 0 ? '<span class="s">funil inteiro</span>' : ''}</span></label>`).join('')}</div>` : '';
+  sheet(`<h3>Enviar agora?</h3><p>${esc(entry.name)} → ${esc(name)}</p>${steps}<div style="display:flex;gap:10px"><button class="btn sec block" id="no">Cancelar</button><button class="btn block" id="ok">Enviar</button></div>`, (box) => {
     $('#no', box).onclick = closeSheet;
-    $('#ok', box).onclick = async () => { closeSheet(); try { await command('send', { target, name, targetType: entry.kind, targetId: entry.id }, entry.name + ' → ' + name); toast('Enviando pelo Mac…'); } catch (e) { toast(e.message); } };
+    $('#ok', box).onclick = async () => {
+      const sel = box.querySelector('input[name="from"]:checked');
+      const fromStep = sel ? +sel.value : 0;
+      closeSheet();
+      try { await command('send', { target, name, targetType: entry.kind, targetId: entry.id, fromStep }, entry.name + (fromStep ? ' (da ' + (fromStep + 1) + 'ª)' : '') + ' → ' + name); toast('Enviando pelo Mac…'); } catch (e) { toast(e.message); }
+    };
   });
 }
 function pickRule(target, name) {
