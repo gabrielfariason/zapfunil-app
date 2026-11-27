@@ -203,7 +203,9 @@ const ZF = (() => {
     if (!text) return '';
     ctx = ctx || {};
     const name = (ctx.name || '').trim();
-    const first = name.split(/\s+/)[0] || '';
+    // {primeiro_nome}: só se parecer nome de gente ("1agosto28_172" ou "+55 11…" viram vazio → "eaiii, tudo bem?")
+    const tok = name.split(/\s+/).find((w) => /[\p{L}\d]/u.test(w)) || '';
+    let first = /[\d_@]/.test(tok) ? '' : tok.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '');
     const now = new Date();
     const g = greeting(now);
     const map = {

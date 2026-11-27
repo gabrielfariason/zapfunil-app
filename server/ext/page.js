@@ -133,7 +133,9 @@
   function contactName(chatId) {
     try {
       const c = WPP.whatsapp.ContactStore && WPP.whatsapp.ContactStore.get(chatId);
-      if (c) return c.name || c.pushname || c.verifiedName || c.formattedName || '';
+      // nome salvo tipo "1agosto28_172" (etiqueta de lead) não é nome: usa o nome que a pessoa colocou no WhatsApp
+      const isName = (n) => !!n && /\p{L}/u.test(n) && !/[\d_@]/.test(String(n).trim().split(/\s+/)[0]);
+      if (c) return [c.name, c.pushname, c.verifiedName].find(isName) || c.name || c.pushname || c.verifiedName || c.formattedName || '';
     } catch (e) {}
     try {
       const chat = WPP.chat.get(chatId);

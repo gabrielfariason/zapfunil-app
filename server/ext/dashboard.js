@@ -2707,7 +2707,9 @@
         return toast('Arquivo inválido');
       }
       if (!data.__zapfunil) return toast('Esse arquivo não é um backup do ZapFunil');
-      const replace = confirm('OK = SUBSTITUIR tudo pelo backup\nCancelar = JUNTAR com o que já existe');
+      // pacote "só adicionar" (ex.: funis prontos): nunca substitui nem apaga nada, só junta o que é novo
+      const addOnly = !!data.__addOnly;
+      const replace = addOnly ? false : confirm('OK = SUBSTITUIR tudo pelo backup\nCancelar = JUNTAR com o que já existe');
       const out = {};
       // backup "sem mídias": aproveita o áudio/vídeo/imagem que já existe aqui (mesmo id)
       if (Array.isArray(data.items)) data.items = data.items.map((x) => {
@@ -2726,6 +2728,16 @@
           const ids = new Set(DB[k].map((x) => x.id));
           out[k] = DB[k].concat(inc.filter((x) => !ids.has(x.id)));
         }
+      }
+      if (addOnly) {
+        const add = { items: out.items, funnels: out.funnels };
+        const nf = out.funnels.length - DB.funnels.length;
+        const ni = out.items.length - DB.items.length;
+        await ZF.save(add);
+        await reload();
+        toast(nf + ni ? 'Adicionado: ' + nf + ' funil(s) e ' + ni + ' mensagem(ns) — nada foi apagado ✅' : 'Esses itens já estavam aqui — nada mudou');
+        renderSettings();
+        return;
       }
       if (data.gAuto && (replace || !Object.keys(DB.gAuto || {}).length)) out.gAuto = data.gAuto;
       // relatório: junta os dias (fica com o maior de cada dia)
