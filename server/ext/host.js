@@ -100,6 +100,22 @@ const ZFHost = (() => {
       sSave();
     }
   });
+  const CLOUD_MEDIA_KB = 1024; // mídia acima disso fica só neste aparelho
+  const PUSH_MAX = 2.5e6; // bytes por rodada de sincronização
+  // versão leve do item (sem a mídia) é o que define se mudou
+  function itemHash(lt) {
+    return 'v2:' + hash(JSON.stringify(lt));
+  }
+  async function cloudItem(lt) {
+    if (lt.data || !lt.hasMedia) return lt;
+    if ((lt.mediaKb || 0) <= CLOUD_MEDIA_KB) {
+      const full = (await ZF.fullItems([lt]))[0];
+      if (full && full.data) return full;
+    }
+    const c = Object.assign({}, lt, { cloudNoMedia: true });
+    delete c.hasMedia;
+    return c;
+  }
   function hash(str) {
     let h = 0x811c9dc5;
     for (let i = 0; i < str.length; i++) {
@@ -132,9 +148,11 @@ const ZFHost = (() => {
   }
 
   async function pull(isLeaderNow) {
-    const rows = (await ZFRemote.rest('zf_kv?select=key,rev')) || [];
+    const rows = (await ZFRemote.rest('zf_kv?select=key,rev,host')) || [];
     const remote = {};
     for (const r of rows) remote[r.key] = r.rev;
+    // linha de item que este próprio aparelho subiu (ex.: resposta perdida num erro 504): não baixa de novo
+    for (const r of rows) if (r.key.startsWith('items#') && r.host === me.id && (S.meta[r.key] || 0) < r.rev) S.meta[r.key] = r.rev;
     const need = rows.filter((r) => (S.meta[r.key] || 0) < r.rev).map((r) => r.key);
     if (need.length) {
       const got = await fetchValues(need);
@@ -158,11 +176,25 @@ const ZFHost = (() => {
         for (const k of itemRows) fresh[k.slice(6)] = got[k];
         const missing = ids.filter((id) => !fresh[id] && !byId[id] && remote['items#' + id]);
         if (missing.length) Object.assign(fresh, Object.fromEntries(Object.entries(await fetchValues(missing.map((id) => 'items#' + id))).map(([k, r]) => [k.slice(6), r])));
-        const next = ids.map((id) => (fresh[id] ? fresh[id].value : byId[id])).filter(Boolean);
+        const next = ids
+          .map((id) => {
+            if (!fresh[id]) return byId[id];
+            const v = fresh[id].value;
+            // item cuja mídia grande ficou só no aparelho de origem: não apaga a mídia que já temos aqui
+            if (v && v.cloudNoMedia && byId[id] && byId[id].hasMedia) {
+              const c = Object.assign({}, v, { hasMedia: true, mediaKb: byId[id].mediaKb });
+              delete c.cloudNoMedia;
+              return c;
+            }
+            return v;
+          })
+          .filter(Boolean);
         await setLocal('items', next);
+        const light = ZF.splitItems(next).items;
         for (const id of Object.keys(fresh)) {
           S.meta['items#' + id] = fresh[id].rev;
-          S.hashes[id] = hash(JSON.stringify(fresh[id].value));
+          const lt = light.find((x) => x && x.id === id);
+          if (lt) S.hashes[id] = itemHash(lt);
         }
         if (got.items) S.meta.items = got.items.rev;
         delete S.dirty.items;
@@ -195,37 +227,46 @@ const ZFHost = (() => {
       if (k === 'items' && Array.isArray(v)) {
         const ids = v.map((i) => i.id);
         rows.push({ key: 'items', value: { ids }, host: me.id });
-        // na nuvem cada item vai completo (com a mídia), no mesmo formato de sempre
-        const full = await ZF.fullItems(v);
-        for (const it of full) {
-          const h = hash(JSON.stringify(it));
-          if (S.hashes[it.id] !== h) {
-            rows.push({ key: 'items#' + it.id, value: it, host: me.id });
-            newHashes[it.id] = h;
-          }
+        // Cada item numa linha. A mídia só vai junto se for pequena (até CLOUD_MEDIA_KB):
+        // vídeos/áudios grandes derrubavam o banco da nuvem e travavam a extensão (carregava
+        // centenas de MB a cada 5 s). Agora compara pela versão leve, sem ler a mídia.
+        for (const lt of v) {
+          if (!lt || !lt.id) continue;
+          const h = itemHash(lt);
+          if (S.hashes[lt.id] === h) continue;
+          rows.push({ key: 'items#' + lt.id, value: await cloudItem(lt), host: me.id, _id: lt.id, _h: h });
         }
         for (const id of Object.keys(S.hashes)) if (!ids.includes(id)) dels.push(id);
       } else {
         rows.push({ key: k, value: v, host: me.id });
       }
     }
-    // envia em pacotes de até ~3 MB
+    // envia em pacotes pequenos e no máximo ~PUSH_MAX por rodada (o resto vai na próxima, 5 s depois)
     let batch = [];
     let size = 0;
+    let sent = 0;
+    let more = false;
     const flush = async () => {
       if (!batch.length) return;
+      const body = batch.map((r) => ({ key: r.key, value: r.value, host: r.host }));
       const res = await ZFRemote.rest('zf_kv?on_conflict=user_id,key&select=key,rev', {
         method: 'POST',
         headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
-        body: batch
+        body
       });
       for (const r of res || []) S.meta[r.key] = r.rev;
+      for (const r of batch) if (r._id) newHashes[r._id] = r._h;
+      sent += size;
       batch = [];
       size = 0;
     };
     for (const r of rows) {
       const sz = JSON.stringify(r.value).length;
-      if (size + sz > 3e6) await flush();
+      if (size && size + sz > 1.5e6) await flush();
+      if (sent + size + sz > PUSH_MAX && (sent || size)) {
+        more = true;
+        break;
+      }
       batch.push(r);
       size += sz;
     }
@@ -238,7 +279,7 @@ const ZFHost = (() => {
         delete S.meta['items#' + id];
       }
     }
-    for (const k of keys) if (S.dirty[k] === snap[k]) delete S.dirty[k];
+    if (!more) for (const k of keys) if (S.dirty[k] === snap[k]) delete S.dirty[k];
     sSave();
   }
 
