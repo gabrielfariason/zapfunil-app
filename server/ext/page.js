@@ -180,7 +180,7 @@
       return { id, name: contactName(id), isGroup: /@g\.us$/.test(id) };
     },
     async resolve(target) {
-      const id = await resolveChatId(target);
+      const id = await chatKey(await resolveChatId(target));
       return { id, name: contactName(id) };
     },
     async contactName(chatId) {
@@ -357,6 +357,7 @@
     },
     // coloca as etiquetas `add` (cria se não existir) e tira as `remove` que o contato tiver
     async applyLabels(chatId, add, remove) {
+      chatId = await chatKey(chatId);
       add = (add || []).filter(Boolean);
       remove = (remove || []).filter(Boolean);
       const created = [];
@@ -413,8 +414,9 @@
       if (ids.includes(chatId) || (pn && ids.includes(pn))) return { already: true };
       let code = 0;
       try {
-        const r = await withTimeout(WPP.group.addParticipants(groupId, [chatId]), 20000, 'adicionar no grupo');
-        const v = r && (r[chatId] || Object.values(r)[0]);
+        const addId = pn || chatId; // grupo aceita o número (@c.us)
+        const r = await withTimeout(WPP.group.addParticipants(groupId, [addId]), 20000, 'adicionar no grupo');
+        const v = r && (r[addId] || r[chatId] || Object.values(r)[0]);
         code = Number((v && (v.code || v.status)) || 0);
         if (!code && v && !v.invite_code) code = 200;
       } catch (e) {
@@ -433,6 +435,17 @@
       return { ok: true };
     }
   };
+  // conversa que já existe guardada pelo id novo do WhatsApp (@lid): usa ele, senão etiqueta/histórico vão pro lugar errado
+  async function chatKey(id) {
+    if (!/@c\.us$/.test(id || '')) return id;
+    try {
+      if (WPP.chat.get(id)) return id;
+      const e = await withTimeout(WPP.contact.getPnLidEntry(id), 4000, 'lid');
+      const lid = e && e.lid ? wid(e.lid) : '';
+      if (lid && WPP.chat.get(lid)) return lid;
+    } catch (e) {}
+    return id;
+  }
   const normName = (n) => String(n || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
   async function findLabel(n) {
     return (await WPP.labels.getAllLabels()).find((l) => normName(l.name) === normName(n));
