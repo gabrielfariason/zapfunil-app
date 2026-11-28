@@ -2356,7 +2356,8 @@
     // a mesma venda não roda 2x (e order bump do mesmo produto em seguida não repete as boas-vindas)
     const log = (await chrome.storage.local.get('salesLog')).salesLog || [];
     if (p.orderId && log.some((x) => x.orderId === p.orderId && x.src === p.src && x.ok)) return 'Venda já processada';
-    const recent = log.find((x) => x.phone === p.phone && x.kind === kind && x.ok && Date.now() - x.t < 30 * 60000);
+    // já comprou esse tipo antes (renovação da assinatura, order bump, upgrade): só garante a etiqueta, sem repetir boas-vindas/grupo
+    const recent = !!p.renewal || log.some((x) => x.phone === p.phone && x.kind === kind && x.ok && x.note && !/sem regra|desligadas/.test(x.note));
     const c = await resolveTarget(p.phone);
     const name = p.name || c.name || '';
     const ctx = { name, number: c.id };
@@ -2394,6 +2395,7 @@
         errs.push('grupo: ' + e.message);
       }
     }
+    if (recent) steps.push('já era aluno — sem repetir boas-vindas' + (kind === 'nova' ? '/grupo' : ''));
     const ok = !errs.length;
     await salesLogPush({ name, product: p.product, phone: p.phone, chatId: c.id, src: p.src, orderId: p.orderId, kind, ok, note: steps.join(' · ') + (errs.length ? ' ⚠️ ' + errs.join(' · ') : '') });
     logHistory({ chatId: c.id, name, what: '💰 Venda: ' + (p.product || kind), source: 'venda ' + (p.src || ''), ok, err: errs.join(' · ') });
