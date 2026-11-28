@@ -209,7 +209,7 @@
   $('#openWa').addEventListener('click', () => chrome.runtime.sendMessage({ type: 'focusWhatsApp' }));
 
   function render() {
-    const fn = { leads: renderLeads, mobile: renderMobile, items: renderItems, funnels: renderFunnels, remarketing: renderRemarketing, triggers: renderTriggers, schedules: renderSchedules, campaigns: renderCampaigns, groups: renderGroups, report: renderReport, search: renderSearch, history: renderHistory, settings: renderSettings }[view] || renderItems;
+    const fn = { sales: renderSales, leads: renderLeads, mobile: renderMobile, items: renderItems, funnels: renderFunnels, remarketing: renderRemarketing, triggers: renderTriggers, schedules: renderSchedules, campaigns: renderCampaigns, groups: renderGroups, report: renderReport, search: renderSearch, history: renderHistory, settings: renderSettings }[view] || renderItems;
     fn();
   }
 
@@ -2572,6 +2572,106 @@
   }
 
   // ------------------------------------------------------------ HISTÓRICO
+  // ---------------------------------------------------------------- VENDAS (Kiwify / Hubla → aluno na hora)
+  async function renderSales() {
+    // 1ª vez na aba: cria as boas-vindas da APEX (usada também no Afiliado) e aponta o grupo dos alunos NOVA
+    if (!DB.settings.salesSetup) {
+      if (!DB.items.some((i) => i.id === 'venda-boasvindas-apex')) {
+        DB.items.push({ id: 'venda-boasvindas-apex', type: 'text', name: 'Boas-vindas APEX (venda)', folder: 'Vendas',
+          text: '🚀 Opaa {primeiro_nome}! SEJA MUITO BEM-VINDO(A) À APEX ACADEMY! 🙏\n\nmuito feliz em ter você com a gente nessa!\n\n📚 *ACESSO ÀS AULAS:* você recebeu um e-mail com o seu acesso à área de membros. é só conferir sua caixa de entrada (e o spam/promoções, por garantia).\n\nqualquer dúvida me chama aqui que eu te ajudo! bora pra cima 🚀' });
+        await persist('items');
+      }
+      const novaG = { id: '120363430314740935@g.us', name: 'Alunos NOVA Trader' };
+      const cur = Object.assign({}, ZF.DEFAULT_SETTINGS.sales, DB.settings.sales || {});
+      cur.welcome = Object.assign({ apex: 'item:venda-boasvindas-apex', afiliado: 'item:venda-boasvindas-apex', nova: '' }, cur.welcome || {});
+      if (!cur.welcome.apex) cur.welcome.apex = 'item:venda-boasvindas-apex';
+      if (!cur.welcome.afiliado) cur.welcome.afiliado = 'item:venda-boasvindas-apex';
+      if (!cur.novaGroupId) Object.assign(cur, { novaGroupId: novaG.id, novaGroupName: novaG.name });
+      DB.settings.sales = cur;
+      DB.settings.salesSetup = Date.now();
+      await persist('settings');
+    }
+    const sales = Object.assign({}, ZF.DEFAULT_SETTINGS.sales, DB.settings.sales || {});
+    sales.rules = (sales.rules || []).map((r) => Object.assign({}, r));
+    sales.welcome = Object.assign({ apex: '', afiliado: '', nova: '' }, sales.welcome || {});
+    const KINDS = [['apex', '🎓 Aluno APEX'], ['afiliado', '🤝 Aluno Afiliado'], ['nova', '📈 Aluno NOVA'], ['ignorar', '🚫 Ignorar']];
+    const local = (await chrome.storage.local.get('salesLog')).salesLog || [];
+    const hook = await bgMsg({ type: 'remote:hookInfo' });
+    const base = hook.ok && hook.data ? hook.data.base : '';
+    const wOpt = (k) => `<select data-w="${k}"><option value="">— nenhuma —</option>${targetOptions(...String(sales.welcome[k] || '').split(/:(.*)/s).slice(0, 2))}</select>`;
+    let h = `<h1>Vendas</h1><p class="sub">Venda aprovada na Kiwify ou na Hubla → em segundos o comprador ganha a etiqueta de aluno, recebe as boas-vindas e (NOVA) entra no grupo. A mesma venda nunca roda 2x; se o WhatsApp estiver fechado, fica guardada e sai quando abrir.</p>
+      <div class="section"><label class="inline" style="margin:0"><input type="checkbox" id="sOn" ${sales.enabled !== false ? 'checked' : ''}> <b>Automação de vendas ligada</b></label></div>
+      <div class="section"><h3>1. Cole estes links nas plataformas</h3>`;
+    if (!base) h += `<div class="empty">Conecte sua conta na aba <b>📱 Celular</b> para gerar os links. ${hook.error ? '(' + esc(hook.error) + ')' : ''}</div>`;
+    else {
+      h += [['kiwify', 'Kiwify', 'Apps → Webhooks → Criar webhook → evento <b>Compra aprovada</b> → todos os produtos'], ['hubla', 'Hubla', 'Integrações → Webhooks → Novo → evento <b>Fatura paga</b> (invoice.payment_succeeded) → todos os produtos']]
+        .map(([k, n, how]) => `<label>${n}</label><div class="bar" style="margin:2px 0 4px"><input type="text" readonly value="${esc(base + '&src=' + k)}" id="u_${k}" style="flex:1;font-family:monospace;font-size:12px"><button class="btn sm sec" data-copy="u_${k}">Copiar</button></div><div class="hint">${how}</div>`).join('');
+      h += `<div class="hint" style="margin-top:8px">⚠️ Esses links são secretos (quem tiver pode simular vendas). Não compartilhe.</div>`;
+    }
+    h += `</div><div class="section"><h3>2. Qual produto vira qual aluno</h3><p class="hint">Se o nome do produto contém o texto → vira esse tipo de aluno (vale a 1ª regra que bater). Produto sem regra: só registra, não envia nada.</p><div id="sRules"></div><button class="btn sm sec" id="sAdd">+ Regra</button></div>
+      <div class="section"><h3>3. Boas-vindas de cada um</h3>
+        <div class="row2"><div><label>🎓 Aluno APEX</label>${wOpt('apex')}</div><div><label>🤝 Aluno Afiliado</label>${wOpt('afiliado')}</div></div>
+        <div class="row2"><div><label>📈 Aluno NOVA</label>${wOpt('nova')}</div><div></div></div></div>
+      <div class="section"><h3>4. NOVA: grupo dos alunos</h3>
+        <label class="inline"><input type="checkbox" id="sGrp" ${sales.addToGroup !== false ? 'checked' : ''}> Colocar no grupo (se a privacidade da pessoa não deixar, manda o link do grupo no privado)</label>
+        <div class="bar" style="margin-top:6px"><select id="sGrpSel" style="max-width:360px"><option value="${esc(sales.novaGroupId || '')}">${sales.novaGroupId ? esc(sales.novaGroupName || sales.novaGroupId) : '— escolha o grupo —'}</option></select><button class="btn sm sec" id="sGrpLoad">Carregar grupos</button></div>
+        <label class="inline" style="margin-top:8px"><input type="checkbox" id="sRm" ${sales.stopRmkt !== false ? 'checked' : ''}> Parar todo remarketing de venda quando comprar</label></div>
+      <div class="bar" style="margin:6px 0 18px"><button class="btn" id="sSave">Salvar</button><span class="grow"></span>
+        ${base ? `<input type="text" id="sTestNum" placeholder="Seu número p/ teste" value="${esc((DB.settings.sales && DB.settings.sales.testNumber) || '')}" style="max-width:190px"><select id="sTestKind"><option value="APEX ACADEMY">teste APEX</option><option value="NOVA Comunidade">teste NOVA</option></select><button class="btn sec" id="sTest">🧪 Simular venda</button>` : ''}</div>
+      <div class="section"><h3>Últimas vendas</h3><div id="sLog">${local.length ? '<div class="list">' + local.slice(0, 40).map((x) => `<div class="lrow card"><div class="lmain"><div class="lname">${x.ok ? '✅' : '⚠️'} ${esc(x.name || '+' + (x.phone || ''))} <span class="ftag">${esc(x.product || '')}</span> <span class="ftag">${esc(x.src || '')}</span></div><div class="lsub">${new Date(x.t).toLocaleString('pt-BR')} · ${esc(x.note || '')}</div></div></div>`).join('') + '</div>' : '<div class="empty">Nenhuma venda processada ainda.</div>'}</div>
+        <div class="bar" style="margin-top:8px"><button class="btn sm sec" id="sCloud">Ver o que chegou das plataformas</button></div><div id="sCloudList"></div></div>`;
+    $('#main').innerHTML = h;
+    const drawRules = () => {
+      $('#sRules').innerHTML = sales.rules.map((r, i) => `<div class="bar" style="margin:0 0 6px;flex-wrap:nowrap;align-items:center"><span class="hint" style="flex:none">nome contém</span><input type="text" data-rm="${i}" value="${esc(r.match)}" style="width:220px;flex:none"><span class="hint">→</span><select data-rk="${i}" style="width:200px;flex:none">${KINDS.map(([k, t]) => `<option value="${k}" ${r.kind === k ? 'selected' : ''}>${t}</option>`).join('')}</select><button class="btn sm red" data-rx="${i}">✕</button></div>`).join('') || '<div class="hint">Nenhuma regra.</div>';
+      $$('[data-rx]').forEach((b) => (b.onclick = () => { readRules(); sales.rules.splice(+b.dataset.rx, 1); drawRules(); }));
+    };
+    const readRules = () => { $$('[data-rm]').forEach((inp) => (sales.rules[+inp.dataset.rm].match = inp.value.trim())); $$('[data-rk]').forEach((sel) => (sales.rules[+sel.dataset.rk].kind = sel.value)); };
+    drawRules();
+    $('#sAdd').onclick = () => { readRules(); sales.rules.push({ match: '', kind: 'apex' }); drawRules(); };
+    $$('[data-copy]').forEach((b) => (b.onclick = async () => { const i = $('#' + b.dataset.copy); i.select(); await navigator.clipboard.writeText(i.value).catch(() => document.execCommand('copy')); toast('Link copiado'); }));
+    $('#sGrpLoad').onclick = async () => {
+      const r = await bgMsg({ type: 'wa:groups' });
+      if (!r || !r.list) return toast('⚠️ ' + ((r && r.error) || 'Não consegui carregar os grupos'));
+      $('#sGrpSel').innerHTML = '<option value="">— escolha o grupo —</option>' + r.list.map((g) => `<option value="${esc(g.id)}" ${g.id === sales.novaGroupId ? 'selected' : ''}>${esc(g.name)}${g.admin === false ? ' (você não é admin)' : ''}</option>`).join('');
+    };
+    const save = async (quiet) => {
+      readRules();
+      sales.enabled = $('#sOn').checked;
+      sales.addToGroup = $('#sGrp').checked;
+      sales.stopRmkt = $('#sRm').checked;
+      sales.rules = sales.rules.filter((r) => r.match);
+      $$('[data-w]').forEach((sel) => (sales.welcome[sel.dataset.w] = sel.value));
+      const gs = $('#sGrpSel');
+      sales.novaGroupId = gs.value;
+      sales.novaGroupName = gs.value ? gs.options[gs.selectedIndex].text.replace(/ \(você não é admin\)$/, '') : '';
+      if ($('#sTestNum')) sales.testNumber = $('#sTestNum').value.trim();
+      DB.settings.sales = sales;
+      await persist('settings');
+      if (!quiet) toast('Vendas salvas ✅');
+    };
+    $('#sSave').onclick = () => save();
+    $('#sOn').onchange = () => save();
+    if ($('#sTest')) $('#sTest').onclick = async () => {
+      const num = ZF.normalizeNumber($('#sTestNum').value);
+      if (num.length < 12) return toast('Coloque seu número com DDD');
+      if (!confirm('Simular uma venda de "' + $('#sTestKind').value + '" para +' + num + '?\nVai rodar tudo de verdade nesse número (etiqueta, boas-vindas e grupo).')) return;
+      await save(true);
+      const body = { order_id: 'teste-' + Date.now(), order_status: 'paid', webhook_event_type: 'order_approved', Product: { product_name: $('#sTestKind').value }, Customer: { full_name: 'Teste ZapFunil', mobile: '+' + num } };
+      try {
+        const r = await fetch(base + '&src=kiwify', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+        const j = await r.json();
+        toast(j.ok ? '🧪 Venda de teste enviada: ' + j.info + ' — chega no WhatsApp em segundos' : '⚠️ ' + (j.error || r.status));
+      } catch (e) {
+        toast('⚠️ ' + e.message);
+      }
+    };
+    $('#sCloud').onclick = async () => {
+      const r = await bgMsg({ type: 'remote:salesLog' });
+      if (!r.ok) return toast('⚠️ ' + r.error);
+      $('#sCloudList').innerHTML = (r.data || []).length ? '<div class="list" style="margin-top:8px">' + r.data.map((x) => `<div class="lrow card"><div class="lmain"><div class="lname">${x.accepted ? '💰' : '·'} ${esc(x.src || '')} <span class="ftag">${esc(x.event || '')}</span></div><div class="lsub">${new Date(x.at).toLocaleString('pt-BR')} · ${esc(x.info || '')}</div></div></div>`).join('') + '</div>' : '<div class="hint">Nada recebido ainda.</div>';
+    };
+  }
+
   // ---------------------------------------------------------------- LEADS (jornada + etiquetas do WhatsApp Business)
   function agoTxt(t) {
     if (!t) return '';

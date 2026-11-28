@@ -175,9 +175,17 @@ const ZFRemote = (() => {
   async function rpc(name, args) {
     return rest('rpc/' + name, { method: 'POST', body: args || {} });
   }
+  // Vendas: link do webhook (Kiwify/Hubla) e últimas vendas recebidas na nuvem
+  async function hookInfo() {
+    const token = await rpc('zf_hook_token', {});
+    return { token, base: cfg().url + '/functions/v1/zf-venda?k=' + token };
+  }
+  async function salesLog() {
+    return (await rest('zf_sales_log?select=at,src,event,accepted,info&order=id.desc&limit=30')) || [];
+  }
   // Sessão vinda do pareamento do servidor (sem senha)
   async function adopt(json) {
     await setSession(sessionFrom(json, json.user && json.user.email));
   }
-  return { configured, login, signup, logout, claim, finish, release, publish, publishChat, audioGet, audioDel, notify, status, rest, rpc, adopt, getSession };
+  return { configured, login, signup, logout, claim, finish, release, publish, publishChat, audioGet, audioDel, notify, status, rest, rpc, adopt, getSession, hookInfo, salesLog };
 })();

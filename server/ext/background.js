@@ -19,7 +19,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       'remote:chat': () => ZFRemote.publishChat(msg.chatId, msg.data),
       'remote:audio': () => ZFRemote.audioGet(msg.path),
       'remote:audioDel': () => ZFRemote.audioDel(msg.path),
-      'remote:notify': () => ZFRemote.notify(msg.payload)
+      'remote:notify': () => ZFRemote.notify(msg.payload),
+      'remote:hookInfo': () => ZFRemote.hookInfo(),
+      'remote:salesLog': () => ZFRemote.salesLog()
     }[msg.type];
     if (!fn) return;
     Promise.resolve()
@@ -464,3 +466,4 @@ async function seedFunnelStages() {
   await chrome.storage.local.set({ zfStagesSeeded: Date.now() });
 }
 setTimeout(() => seedFunnelStages().catch(() => {}), 6000);
+

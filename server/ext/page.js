@@ -404,6 +404,30 @@
       }
       return { moved: n };
     },
+    // venda NOVA: põe no grupo de alunos; se a pessoa não deixa ser adicionada (privacidade), manda o link no privado
+    async groupAddOrInvite(groupId, chatId) {
+      const parts = (await WPP.group.getParticipants(groupId).catch(() => [])) || [];
+      const ids = parts.map((x) => wid(x.id));
+      let pn = '';
+      try { const e = await WPP.contact.getPnLidEntry(chatId); pn = e && e.phoneNumber ? wid(e.phoneNumber) : ''; } catch (e) {}
+      if (ids.includes(chatId) || (pn && ids.includes(pn))) return { already: true };
+      let code = 0;
+      try {
+        const r = await withTimeout(WPP.group.addParticipants(groupId, [chatId]), 20000, 'adicionar no grupo');
+        const v = r && (r[chatId] || Object.values(r)[0]);
+        code = Number((v && (v.code || v.status)) || 0);
+        if (!code && v && !v.invite_code) code = 200;
+      } catch (e) {
+        code = 0;
+      }
+      if (code === 200) return { added: true };
+      if (code === 409) return { already: true };
+      // não deu para adicionar direto: link de convite no privado
+      const inv = await withTimeout(WPP.group.getInviteCode(groupId), 15000, 'link do grupo');
+      const link = 'https://chat.whatsapp.com/' + String(inv).replace(/^.*chat\.whatsapp\.com\//, '');
+      await WPP.chat.sendTextMessage(chatId, 'aqui o link pra você entrar no grupo dos alunos 👇\n' + link, { createChat: true, waitForAck: false, linkPreview: true });
+      return { invited: true, code };
+    },
     async labelDelete(id) {
       await WPP.labels.deleteLabel(String(id));
       return { ok: true };

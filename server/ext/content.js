@@ -2305,7 +2305,9 @@
       let ok = true;
       let result = '';
       try {
-        if (Date.now() - new Date(cmd.created_at).getTime() > CMD_MAX_AGE) throw new Error('Expirou: o Mac/WhatsApp Web estava offline quando você mandou');
+        // venda não expira em 15 min: fica guardada até o WhatsApp abrir (até 3 dias)
+        const maxAge = cmd.kind === 'purchase' ? 3 * 86400000 : CMD_MAX_AGE;
+        if (Date.now() - new Date(cmd.created_at).getTime() > maxAge) throw new Error('Expirou: o Mac/WhatsApp Web estava offline quando você mandou');
         result = await runCommand(cmd);
       } catch (e) {
         ok = false;
@@ -2324,9 +2326,87 @@
     return call('resolve', num);
   }
 
+  // ---------------------------------------------------------------- VENDAS (Kiwify / Hubla)
+  // produto → tipo de aluno pelas regras (texto no nome do produto)
+  function saleKind(product) {
+    const sales = Object.assign({}, ZF.DEFAULT_SETTINGS.sales, DB.settings.sales || {});
+    const n = ZF.normalizeText(product || '');
+    for (const r of sales.rules || []) {
+      const m = ZF.normalizeText(r.match || '');
+      if (m && n.includes(m)) return r.kind;
+    }
+    return '';
+  }
+  const SALE_STAGE = { apex: 'Aluno APEX', afiliado: 'Aluno Afiliado', nova: 'Aluno NOVA' };
+  async function salesLogPush(e) {
+    await mutate('salesLog', (arr) => [Object.assign({ t: Date.now() }, e)].concat(Array.isArray(arr) ? arr : []).slice(0, 300)).catch(() => {});
+  }
+  async function handlePurchase(p) {
+    const sales = Object.assign({}, ZF.DEFAULT_SETTINGS.sales, DB.settings.sales || {});
+    const kind = saleKind(p.product);
+    const who = (p.name || '') + ' · ' + (p.product || '');
+    if (sales.enabled === false) {
+      await salesLogPush({ name: p.name, product: p.product, phone: p.phone, src: p.src, ok: true, note: 'vendas desligadas' });
+      return 'Venda recebida (automação de vendas desligada)';
+    }
+    if (!kind || kind === 'ignorar') {
+      await salesLogPush({ name: p.name, product: p.product, phone: p.phone, src: p.src, ok: true, note: 'produto sem regra — nada enviado' });
+      return 'Venda recebida: ' + who + ' (produto sem regra, nada enviado)';
+    }
+    // a mesma venda não roda 2x (e order bump do mesmo produto em seguida não repete as boas-vindas)
+    const log = (await chrome.storage.local.get('salesLog')).salesLog || [];
+    if (p.orderId && log.some((x) => x.orderId === p.orderId && x.src === p.src && x.ok)) return 'Venda já processada';
+    const recent = log.find((x) => x.phone === p.phone && x.kind === kind && x.ok && Date.now() - x.t < 30 * 60000);
+    const c = await resolveTarget(p.phone);
+    const name = p.name || c.name || '';
+    const ctx = { name, number: c.id };
+    const steps = [];
+    const errs = [];
+    // 1) etiqueta de aluno (tira as de venda) + para o remarketing de venda
+    try {
+      await applyStage(c.id, SALE_STAGE[kind], ctx, 'venda ' + (p.src || ''));
+      steps.push('🏷️ ' + SALE_STAGE[kind]);
+    } catch (e) {
+      errs.push('etiqueta: ' + e.message);
+    }
+    if (sales.stopRmkt !== false) await rmktStopChat(c.id).catch(() => {});
+    // 2) boas-vindas
+    const w = (sales.welcome || {})[kind];
+    if (w && !recent) {
+      const [tt, ...rest] = String(w).split(':');
+      const f = targetToFunnel(tt, rest.join(':'));
+      if (!f) errs.push('boas-vindas não existe mais');
+      else {
+        try {
+          await runFunnel(c.id, f, ctx, 'venda: ' + (p.product || kind));
+          steps.push('💬 boas-vindas');
+        } catch (e) {
+          errs.push('boas-vindas: ' + e.message);
+        }
+      }
+    }
+    // 3) NOVA: grupo de alunos (adiciona; se a privacidade não deixar, manda o link no privado)
+    if (kind === 'nova' && sales.addToGroup !== false && sales.novaGroupId && !recent) {
+      try {
+        const g = await call('groupAddOrInvite', sales.novaGroupId, c.id);
+        steps.push(g.added ? '👥 adicionado ao grupo' : g.already ? '👥 já estava no grupo' : '🔗 link do grupo enviado');
+      } catch (e) {
+        errs.push('grupo: ' + e.message);
+      }
+    }
+    const ok = !errs.length;
+    await salesLogPush({ name, product: p.product, phone: p.phone, chatId: c.id, src: p.src, orderId: p.orderId, kind, ok, note: steps.join(' · ') + (errs.length ? ' ⚠️ ' + errs.join(' · ') : '') });
+    logHistory({ chatId: c.id, name, what: '💰 Venda: ' + (p.product || kind), source: 'venda ' + (p.src || ''), ok, err: errs.join(' · ') });
+    notifyPhone(ok ? 'msg' : 'error', ok ? '💰 Nova venda' : '⚠️ Venda com erro', who + (ok ? ' — ' + steps.join(', ') : ' — ' + errs.join(' · ')), { tag: 'sale-' + (p.orderId || c.id), url: './#c=' + encodeURIComponent(c.id) });
+    if (!ok) throw new Error(errs.join(' · '));
+    return 'Venda: ' + who + ' → ' + steps.join(', ');
+  }
+
   async function runCommand(cmd) {
     const p = cmd.payload || {};
     switch (cmd.kind) {
+      case 'purchase':
+        return handlePurchase(p);
       case 'send': {
         let funnel = targetToFunnel(p.targetType, p.targetId);
         if (!funnel) throw new Error('Funil/item não existe mais');

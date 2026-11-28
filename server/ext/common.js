@@ -12,6 +12,20 @@ const ZF = (() => {
     undoSeconds: 8,         // depois de excluir, quanto tempo o botão "Desfazer" fica na tela (0 = pedir confirmação)
     statsDays: 120,         // quantos dias o relatório guarda
     autoBackup: { enabled: true, everyDays: 7, includeMedia: true, keep: 4 },
+    // Vendas (Kiwify/Hubla): qual produto vira qual aluno, boas-vindas e grupo
+    sales: {
+      enabled: true,
+      rules: [
+        { match: 'nova', kind: 'nova' },
+        { match: 'afiliad', kind: 'afiliado' },
+        { match: 'apex', kind: 'apex' },
+        { match: 'acesso vitalicio', kind: 'apex' }
+      ],
+      welcome: { apex: '', afiliado: '', nova: '' }, // 'funnel:id' ou 'item:id'
+      novaGroupId: '',
+      addToGroup: true,
+      stopRmkt: true
+    },
     // Variações: {oi} vira uma destas opções, sorteada a cada envio
     variations: [
       { key: 'oi', options: ['Oi', 'Olá', 'Opa', 'Oii', 'E aí'] },
