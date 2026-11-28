@@ -467,3 +467,17 @@ async function seedFunnelStages() {
 }
 setTimeout(() => seedFunnelStages().catch(() => {}), 6000);
 
+
+// (1x) tira a regra "acesso vitalicio → APEX" (produto não deve disparar nada)
+(async () => {
+  try {
+    const d = await chrome.storage.local.get(['settings', 'zfSalesFix1']);
+    if (d.zfSalesFix1) return;
+    const st = d.settings;
+    if (st && st.sales && Array.isArray(st.sales.rules)) {
+      const rules = st.sales.rules.filter((r) => ZF.normalizeText(r.match || '') !== 'acesso vitalicio');
+      if (rules.length !== st.sales.rules.length) await chrome.storage.local.set({ settings: Object.assign({}, st, { sales: Object.assign({}, st.sales, { rules }) }) });
+    }
+    await chrome.storage.local.set({ zfSalesFix1: Date.now() });
+  } catch (e) {}
+})();

@@ -18,8 +18,7 @@ const ZF = (() => {
       rules: [
         { match: 'nova', kind: 'nova' },
         { match: 'afiliad', kind: 'afiliado' },
-        { match: 'apex', kind: 'apex' },
-        { match: 'acesso vitalicio', kind: 'apex' }
+        { match: 'apex', kind: 'apex' }
       ],
       welcome: { apex: '', afiliado: '', nova: '' }, // 'funnel:id' ou 'item:id'
       novaGroupId: '',
